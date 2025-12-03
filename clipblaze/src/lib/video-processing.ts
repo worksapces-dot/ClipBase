@@ -16,13 +16,13 @@ export type HighlightClip = {
 }
 
 // Transcribe audio using OpenAI Whisper
-export async function transcribeAudio(audioBuffer: Buffer): Promise<{
+export async function transcribeAudio(audioBuffer: ArrayBuffer | Uint8Array): Promise<{
   text: string
   segments: TranscriptSegment[]
 }> {
-  // Convert Buffer to Uint8Array for File constructor compatibility
-  const uint8Array = new Uint8Array(audioBuffer)
-  const file = new File([uint8Array], 'audio.mp3', { type: 'audio/mp3' })
+  // Convert to Blob for File constructor compatibility
+  const blob = new Blob([audioBuffer], { type: 'audio/mp3' })
+  const file = new File([blob], 'audio.mp3', { type: 'audio/mp3' })
   
   const response = await openai.audio.transcriptions.create({
     file,

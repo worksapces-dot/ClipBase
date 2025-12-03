@@ -115,8 +115,16 @@ Only return valid JSON, no other text.`;
     });
     const content = response.choices[0]?.message?.content || '{"clips":[]}';
     try {
-        const parsed = JSON.parse(content);
+        // Try to extract JSON from the response
+        let jsonStr = content.trim();
+        // If it starts with ``` or has markdown, extract the JSON
+        const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) {
+            jsonStr = jsonMatch[1].trim();
+        }
+        const parsed = JSON.parse(jsonStr);
         const clips = Array.isArray(parsed) ? parsed : parsed.clips || [];
+        console.log(`Parsed ${clips.length} clips from GPT response`);
         // Validate and clean up clips
         return clips
             .filter((c) => c.start_time !== undefined &&
@@ -129,6 +137,7 @@ Only return valid JSON, no other text.`;
     }
     catch (error) {
         console.error("Failed to parse highlights:", content);
+        console.error("Parse error:", error);
         return [];
     }
 }
