@@ -72,11 +72,7 @@ export const metadata: Metadata = {
     creator: "@clipblaze",
   },
   icons: {
-    icon: [
-      { url: "/favicon.ico" },
-      { url: "/icon.svg", type: "image/svg+xml" },
-    ],
-    apple: "/apple-touch-icon.png",
+    icon: "/icon.svg",
   },
   manifest: "/manifest.json",
   metadataBase: new URL("https://clipblaze.com"),
