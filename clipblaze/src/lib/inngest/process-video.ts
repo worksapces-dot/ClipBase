@@ -1,15 +1,29 @@
 import { inngest } from "../inngest";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Lazy-load clients to avoid build-time errors
+let supabase: SupabaseClient;
+let openai: OpenAI;
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+function getSupabase() {
+  if (!supabase) {
+    supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+  }
+  return supabase;
+}
+
+function getOpenAI() {
+  if (!openai) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
+  return openai;
+}
 
 // Types
 interface TranscriptSegment {
@@ -54,7 +68,7 @@ export const processVideo = inngest.createFunction(
 
     // Step 1: Get video info and download URL
     const videoInfo = await step.run("get-video-info", async () => {
-      await supabase
+      await getSupabase()
         .from("videos")
         .update({ status: "downloading", updated_at: new Date().toISOString() })
         .eq("id", videoId);
@@ -102,7 +116,7 @@ export const processVideo = inngest.createFunction(
     });
 
     if (!videoInfo.audioUrl) {
-      await supabase
+      await getSupabase()
         .from("videos")
         .update({ status: "failed", error_message: "Could not get download URL" })
         .eq("id", videoId);
@@ -110,7 +124,7 @@ export const processVideo = inngest.createFunction(
     }
 
     // Update video title
-    await supabase
+    await getSupabase()
       .from("videos")
       .update({ title: videoInfo.title, duration_seconds: videoInfo.duration })
       .eq("id", videoId);
@@ -118,7 +132,7 @@ export const processVideo = inngest.createFunction(
 
     // Step 2: Transcribe with Whisper
     const transcript = await step.run("transcribe-video", async () => {
-      await supabase
+      await getSupabase()
         .from("videos")
         .update({ status: "transcribing", updated_at: new Date().toISOString() })
         .eq("id", videoId);
@@ -130,7 +144,7 @@ export const processVideo = inngest.createFunction(
       // Create a File object for OpenAI
       const audioFile = new File([audioBuffer], "audio.mp3", { type: "audio/mpeg" });
 
-      const response = await openai.audio.transcriptions.create({
+      const response = await getOpenAI().audio.transcriptions.create({
         file: audioFile,
         model: "whisper-1",
         response_format: "verbose_json",
@@ -144,7 +158,7 @@ export const processVideo = inngest.createFunction(
       }));
 
       // Save transcript to database
-      await supabase.from("transcripts").insert({
+      await getSupabase().from("transcripts").insert({
         video_id: videoId,
         full_text: response.text,
         segments,
@@ -160,7 +174,7 @@ export const processVideo = inngest.createFunction(
 
     // Step 3: Find highlights with GPT-4
     const highlights = await step.run("find-highlights", async () => {
-      await supabase
+      await getSupabase()
         .from("videos")
         .update({ status: "analyzing", updated_at: new Date().toISOString() })
         .eq("id", videoId);
@@ -187,7 +201,7 @@ Look for: Strong hooks, emotional moments, valuable insights, controversial stat
 Return ONLY a JSON array:
 [{"title": "...", "startTime": 0, "endTime": 30, "viralScore": 85, "reason": "..."}]`;
 
-      const response = await openai.chat.completions.create({
+      const response = await getOpenAI().chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.7,
@@ -204,7 +218,7 @@ Return ONLY a JSON array:
     });
 
     if (highlights.length === 0) {
-      await supabase
+      await getSupabase()
         .from("videos")
         .update({ status: "failed", error_message: "No viral moments found" })
         .eq("id", videoId);
@@ -214,7 +228,7 @@ Return ONLY a JSON array:
 
     // Step 4: Create clip records
     const clipResults = await step.run("create-clips", async () => {
-      await supabase
+      await getSupabase()
         .from("videos")
         .update({ status: "generating", updated_at: new Date().toISOString() })
         .eq("id", videoId);
@@ -222,7 +236,7 @@ Return ONLY a JSON array:
       const createdClips = [];
 
       for (const clip of highlights) {
-        const { data, error } = await supabase
+        const { data, error } = await getSupabase()
           .from("clips")
           .insert({
             video_id: videoId,
@@ -248,7 +262,7 @@ Return ONLY a JSON array:
 
     // Step 5: Mark video as completed
     await step.run("complete", async () => {
-      await supabase
+      await getSupabase()
         .from("videos")
         .update({ status: "completed", updated_at: new Date().toISOString() })
         .eq("id", videoId);
