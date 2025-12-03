@@ -63,21 +63,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create video record' }, { status: 500 })
     }
 
-    // Trigger Supabase Edge Function for processing
-    const edgeFunctionUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/process-video`
-    
-    fetch(edgeFunctionUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-      body: JSON.stringify({
-        videoId: video.id,
-        youtubeUrl: url,
-        userId: user.id,
-      }),
-    }).catch(console.error) // Fire and forget
+    // Worker will pick up the pending video automatically
 
     return NextResponse.json({ 
       success: true, 
