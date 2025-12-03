@@ -1,4 +1,4 @@
-import { getPendingJobs, updateJobStatus, Job } from "./supabase";
+import { getPendingVideos, updateVideoStatus, Video } from "./supabase";
 import { downloadVideo } from "./youtube";
 import * as fs from "fs";
 import * as path from "path";
@@ -11,31 +11,43 @@ if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
 
-async function processJob(job: Job): Promise<void> {
-  console.log(`\nProcessing job ${job.id}`);
-  console.log(`YouTube URL: ${job.youtube_url}`);
+async function processVideo(video: Video): Promise<void> {
+  console.log(`\nProcessing video ${video.id}`);
+  console.log(`URL: ${video.source_url}`);
 
-  const videoPath = path.join(TEMP_DIR, `${job.id}.mp4`);
+  if (!video.source_url) {
+    await updateVideoStatus(video.id, "failed", { error_message: "No source URL" });
+    return;
+  }
+
+  const videoPath = path.join(TEMP_DIR, `${video.id}.mp4`);
 
   try {
-    // Update status to processing
-    await updateJobStatus(job.id, "processing");
+    // Step 1: Downloading
+    await updateVideoStatus(video.id, "downloading");
+    await downloadVideo(video.source_url, videoPath);
+    console.log("Download complete");
 
-    // Download the video
-    await downloadVideo(job.youtube_url, videoPath);
+    // Step 2: Transcribing (TODO: implement with Whisper/AssemblyAI)
+    await updateVideoStatus(video.id, "transcribing");
+    console.log("Transcribing... (placeholder)");
 
-    // TODO: Add video processing here (AI highlights, captions, etc.)
+    // Step 3: Analyzing (TODO: implement AI highlight detection)
+    await updateVideoStatus(video.id, "analyzing");
+    console.log("Analyzing for highlights... (placeholder)");
 
-    // For now, mark as completed
-    await updateJobStatus(job.id, "completed", {
-      output_url: `processed/${job.id}.mp4`,
-    });
+    // Step 4: Generating clips (TODO: implement FFmpeg processing)
+    await updateVideoStatus(video.id, "generating");
+    console.log("Generating clips... (placeholder)");
 
-    console.log(`Job ${job.id} completed`);
+    // Mark as completed
+    await updateVideoStatus(video.id, "completed");
+    console.log(`Video ${video.id} completed`);
+
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    console.error(`Job ${job.id} failed:`, message);
-    await updateJobStatus(job.id, "failed", { error_message: message });
+    console.error(`Video ${video.id} failed:`, message);
+    await updateVideoStatus(video.id, "failed", { error_message: message });
   } finally {
     // Cleanup temp file
     if (fs.existsSync(videoPath)) {
@@ -44,21 +56,20 @@ async function processJob(job: Job): Promise<void> {
   }
 }
 
+async function pollForVideos(): Promise<void> {
+  console.log("Checking for pending videos...");
 
-async function pollForJobs(): Promise<void> {
-  console.log("Checking for pending jobs...");
+  const videos = await getPendingVideos();
 
-  const jobs = await getPendingJobs();
-
-  if (jobs.length === 0) {
-    console.log("No pending jobs");
+  if (videos.length === 0) {
+    console.log("No pending videos");
     return;
   }
 
-  console.log(`Found ${jobs.length} pending job(s)`);
+  console.log(`Found ${videos.length} pending video(s)`);
 
-  for (const job of jobs) {
-    await processJob(job);
+  for (const video of videos) {
+    await processVideo(video);
   }
 }
 
@@ -66,13 +77,13 @@ async function main(): Promise<void> {
   console.log("=================================");
   console.log("  ClipBlaze Worker Started");
   console.log("=================================");
-  console.log(`Poll interval: ${POLL_INTERVAL}ms`);
+  console.log(`Poll interval: ${POLL_INTERVAL}ms\n`);
 
   // Initial poll
-  await pollForJobs();
+  await pollForVideos();
 
   // Continue polling
-  setInterval(pollForJobs, POLL_INTERVAL);
+  setInterval(pollForVideos, POLL_INTERVAL);
 }
 
 main().catch(console.error);

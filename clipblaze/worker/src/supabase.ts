@@ -5,52 +5,63 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY!;
 
 export const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-export type JobStatus = "pending" | "processing" | "completed" | "failed";
+export type VideoStatus = 
+  | "pending" 
+  | "downloading" 
+  | "transcribing" 
+  | "analyzing" 
+  | "generating" 
+  | "completed" 
+  | "failed";
 
-export interface Job {
+export interface Video {
   id: string;
   user_id: string;
-  youtube_url: string;
-  status: JobStatus;
+  title: string | null;
+  source_url: string | null;
+  source_type: string | null;
+  storage_path: string | null;
+  duration_seconds: number | null;
+  status: VideoStatus;
+  error_message: string | null;
+  metadata: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
-  error_message?: string;
-  output_url?: string;
 }
 
-// Fetch pending jobs
-export async function getPendingJobs(): Promise<Job[]> {
+// Fetch pending videos
+export async function getPendingVideos(): Promise<Video[]> {
   const { data, error } = await supabase
-    .from("jobs")
+    .from("videos")
     .select("*")
     .eq("status", "pending")
     .order("created_at", { ascending: true })
     .limit(5);
 
   if (error) {
-    console.error("Error fetching jobs:", error);
+    console.error("Error fetching videos:", error);
     return [];
   }
 
   return data || [];
 }
 
-// Update job status
-export async function updateJobStatus(
-  jobId: string,
-  status: JobStatus,
-  extra?: { error_message?: string; output_url?: string }
+// Update video status
+export async function updateVideoStatus(
+  videoId: string,
+  status: VideoStatus,
+  extra?: { error_message?: string; storage_path?: string; title?: string; duration_seconds?: number }
 ): Promise<void> {
   const { error } = await supabase
-    .from("jobs")
+    .from("videos")
     .update({
       status,
       updated_at: new Date().toISOString(),
       ...extra,
     })
-    .eq("id", jobId);
+    .eq("id", videoId);
 
   if (error) {
-    console.error("Error updating job:", error);
+    console.error("Error updating video:", error);
   }
 }
