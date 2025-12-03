@@ -16,31 +16,17 @@ export type HighlightClip = {
 }
 
 // Transcribe audio using OpenAI Whisper
-export async function transcribeAudio(audioBuffer: ArrayBuffer | Uint8Array): Promise<{
+// Note: This function is only used by the Render worker, not in Next.js
+export async function transcribeAudio(audioPath: string): Promise<{
   text: string
   segments: TranscriptSegment[]
 }> {
-  // Convert to Blob for File constructor compatibility
-  const blob = new Blob([audioBuffer], { type: 'audio/mp3' })
-  const file = new File([blob], 'audio.mp3', { type: 'audio/mp3' })
+  // This is a placeholder - actual transcription happens in the worker
+  // The worker uses fs.createReadStream directly with OpenAI
+  throw new Error('transcribeAudio should only be called from the worker')
   
-  const response = await openai.audio.transcriptions.create({
-    file,
-    model: 'whisper-1',
-    response_format: 'verbose_json',
-    timestamp_granularities: ['segment'],
-  })
-
-  const segments: TranscriptSegment[] = (response.segments || []).map((seg) => ({
-    start: seg.start,
-    end: seg.end,
-    text: seg.text,
-  }))
-
-  return {
-    text: response.text,
-    segments,
-  }
+  // Placeholder return - actual implementation is in worker/src/ai.ts
+  return { text: '', segments: [] }
 }
 
 // Use GPT-4 to detect viral-worthy highlights
