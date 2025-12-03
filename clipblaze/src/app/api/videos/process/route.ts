@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { inngest } from '@/lib/inngest'
 
 // YouTube URL validation
 function isValidYouTubeUrl(url: string): boolean {
@@ -63,7 +64,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create video record' }, { status: 500 })
     }
 
-    // Worker will pick up the pending video automatically
+    // Trigger Inngest function
+    await inngest.send({
+      name: "video/process",
+      data: {
+        videoId: video.id,
+        youtubeUrl: url,
+        userId: user.id,
+      },
+    })
 
     return NextResponse.json({ 
       success: true, 

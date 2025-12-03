@@ -18,19 +18,22 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
   const searchParams = useSearchParams();
   const router = useRouter();
   const [videos, setVideos] = useState<VideoWithClips[]>(initialVideos);
-  const [processingVideoId, setProcessingVideoId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Find any video that's currently processing
+  const processingVideo = videos.find(v => 
+    v.status !== "completed" && v.status !== "failed"
+  );
 
   // Handle URL from hero redirect
   useEffect(() => {
     const urlParam = searchParams.get("url");
     if (urlParam) {
       handleSubmit(urlParam);
-      // Clear the URL param
       router.replace("/dashboard");
     }
-  }, [searchParams]);
+  }, [searchParams, router]);
 
   const handleSubmit = async (url: string) => {
     setIsSubmitting(true);
@@ -49,9 +52,7 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
         throw new Error(data.error || "Failed to process video");
       }
 
-      setProcessingVideoId(data.videoId);
-      
-      // Add to videos list
+      // Add new video to list
       setVideos(prev => [{
         id: data.videoId,
         user_id: "",
@@ -75,21 +76,16 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
     }
   };
 
+
   const handleProcessingComplete = async () => {
-    // Refresh video data
-    if (processingVideoId) {
-      const res = await fetch(`/api/videos/${processingVideoId}`);
-      if (res.ok) {
-        const updatedVideo = await res.json();
-        setVideos(prev => prev.map(v => 
-          v.id === processingVideoId ? updatedVideo : v
-        ));
-      }
+    // Refresh all videos
+    const res = await fetch("/api/videos");
+    if (res.ok) {
+      const data = await res.json();
+      setVideos(Array.isArray(data) ? data : data.videos || []);
     }
-    setProcessingVideoId(null);
   };
 
-  const processingVideo = videos.find(v => v.id === processingVideoId);
   const completedVideos = videos.filter(v => v.status === "completed");
   const allClips = completedVideos.flatMap(v => v.clips || []);
 
@@ -107,7 +103,7 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
 
       {/* Video Input */}
       <div className="mb-8">
-        <VideoInput onSubmit={handleSubmit} isLoading={isSubmitting} />
+        <VideoInput onSubmit={handleSubmit} isLoading={isSubmitting || !!processingVideo} />
         {error && (
           <p className="text-red-400 text-sm mt-2">{error}</p>
         )}
@@ -117,11 +113,11 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
       </div>
 
       {/* Processing Status */}
-      {processingVideoId && processingVideo && (
+      {processingVideo && (
         <div className="mb-12">
           <ProcessingStatus 
-            videoId={processingVideoId}
-            initialStatus={processingVideo.status as any}
+            videoId={processingVideo.id}
+            initialStatus={processingVideo.status as "pending" | "downloading" | "transcribing" | "analyzing" | "generating" | "completed" | "failed"}
             onComplete={handleProcessingComplete}
           />
         </div>
@@ -146,7 +142,7 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
       )}
 
       {/* Empty State */}
-      {allClips.length === 0 && !processingVideoId && (
+      {allClips.length === 0 && !processingVideo && (
         <div className="text-center py-16">
           <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center mx-auto mb-4">
             <svg className="w-10 h-10 text-white/20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">

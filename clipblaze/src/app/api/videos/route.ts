@@ -14,7 +14,7 @@ export async function GET() {
       .from('videos')
       .select(`
         *,
-        clips (id, title, status, viral_score, duration_seconds)
+        clips (*)
       `)
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
