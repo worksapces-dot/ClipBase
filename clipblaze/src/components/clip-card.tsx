@@ -18,11 +18,13 @@ export function ClipCard({ clip }: ClipCardProps) {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
+  const videoUrl = clip.storage_path;
+
   const handleDownload = async () => {
-    if (!clip.storage_path) return;
+    if (!videoUrl) return;
     
     const link = document.createElement("a");
-    link.href = clip.storage_path;
+    link.href = videoUrl;
     link.download = `${clip.title || "clip"}.mp4`;
     link.target = "_blank";
     document.body.appendChild(link);
@@ -31,15 +33,15 @@ export function ClipCard({ clip }: ClipCardProps) {
   };
 
   const handleShare = async () => {
-    if (!clip.storage_path) return;
+    if (!videoUrl) return;
     
     if (navigator.share) {
       await navigator.share({
         title: clip.title || "Check out this clip!",
-        url: clip.storage_path,
+        url: videoUrl,
       });
     } else {
-      await navigator.clipboard.writeText(clip.storage_path);
+      await navigator.clipboard.writeText(videoUrl);
       alert("Link copied to clipboard!");
     }
   };
@@ -51,9 +53,9 @@ export function ClipCard({ clip }: ClipCardProps) {
         className="relative aspect-[9/16] bg-neutral-900 cursor-pointer"
         onClick={() => setIsPlaying(!isPlaying)}
       >
-        {isPlaying && clip.storage_path ? (
+        {isPlaying && videoUrl ? (
           <video
-            src={clip.storage_path}
+            src={videoUrl}
             className="w-full h-full object-cover"
             autoPlay
             controls
@@ -125,14 +127,14 @@ export function ClipCard({ clip }: ClipCardProps) {
         <div className="flex items-center gap-2">
           <button 
             onClick={handleDownload}
-            disabled={!clip.storage_path}
+            disabled={!videoUrl}
             className="flex-1 py-2 px-3 bg-white text-black text-xs font-semibold rounded-lg hover:bg-white/90 transition-colors disabled:opacity-50"
           >
             Download
           </button>
           <button 
             onClick={handleShare}
-            disabled={!clip.storage_path}
+            disabled={!videoUrl}
             className="py-2 px-3 bg-white/10 text-xs font-semibold rounded-lg hover:bg-white/20 transition-colors disabled:opacity-50"
           >
             Share

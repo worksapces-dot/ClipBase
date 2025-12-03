@@ -1,13 +1,22 @@
 services:
-  - type: worker
+  - type: web
     name: clipblaze-worker
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
+    healthCheckPath: /health
     envVars:
+      - key: PORT
+        value: 3001
       - key: SUPABASE_URL
         sync: false
-      - key: SUPABASE_SERVICE_KEY
+      - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: RAPIDAPI_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: INNGEST_EVENT_KEY
+        sync: false
+      - key: INNGEST_SIGNING_KEY
         sync: false

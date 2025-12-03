@@ -18,9 +18,7 @@ function getSupabase() {
 
 function getOpenAI() {
   if (!openai) {
-    openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   }
   return openai;
 }
@@ -32,33 +30,86 @@ interface TranscriptSegment {
   text: string;
 }
 
-interface ClipSuggestion {
-  title: string;
-  startTime: number;
-  endTime: number;
-  viralScore: number;
-  reason: string;
-  transcript: string;
-}
-
-// Helper: Format seconds to MM:SS
+// Helpers
 function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
-// Helper: Get transcript for time range
-function getTranscriptForRange(
-  segments: TranscriptSegment[],
-  start: number,
-  end: number
-): string {
-  return segments
-    .filter((s) => s.start >= start && s.end <= end)
-    .map((s) => s.text)
-    .join(" ");
+function getTranscriptForRange(segments: TranscriptSegment[], start: number, end: number): string {
+  return segments.filter((s) => s.start >= start && s.end <= end).map((s) => s.text).join(" ");
 }
+
+// Creatomate API helper
+async function renderClipWithCreatomate(
+  videoUrl: string,
+  startTime: number,
+  endTime: number
+): Promise<string> {
+  const CREATOMATE_API_KEY = process.env.CREATOMATE_API_KEY!;
+  const duration = endTime - startTime;
+
+  console.log("Creatomate render request:", { videoUrl: videoUrl.substring(0, 100), startTime, endTime, duration });
+
+  // Create render job - 9:16 vertical format for shorts
+  const renderResponse = await fetch("https://api.creatomate.com/v2/renders", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${CREATOMATE_API_KEY}`,
+    },
+    body: JSON.stringify({
+      output_format: "mp4",
+      width: 1080,
+      height: 1920,
+      elements: [
+        {
+          type: "video",
+          track: 1,
+          source: videoUrl,
+          trim_start: startTime,
+          trim_duration: duration,
+        },
+      ],
+    }),
+  });
+
+  const renderData = await renderResponse.json();
+  console.log("Creatomate render response:", JSON.stringify(renderData));
+
+  // API returns array or single object depending on request
+  const render = Array.isArray(renderData) ? renderData[0] : renderData;
+  
+  if (!renderResponse.ok || !render?.id) {
+    throw new Error(render?.message || render?.error || JSON.stringify(renderData));
+  }
+
+  const renderId = render.id;
+  console.log("Creatomate render ID:", renderId);
+
+  // Poll for completion (max 5 minutes)
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 5000));
+
+    const statusResponse = await fetch(`https://api.creatomate.com/v2/renders/${renderId}`, {
+      headers: { "Authorization": `Bearer ${CREATOMATE_API_KEY}` },
+    });
+    const statusData = await statusResponse.json();
+    const status = statusData.status;
+    console.log(`Creatomate status (${i + 1}/60):`, status);
+
+    if (status === "succeeded") {
+      return statusData.url;
+    } else if (status === "failed") {
+      console.log("Creatomate failed details:", JSON.stringify(statusData));
+      throw new Error("Creatomate render failed: " + (statusData.error_message || "unknown"));
+    }
+  }
+
+  throw new Error("Creatomate render timeout");
+}
+
 
 export const processVideo = inngest.createFunction(
   { id: "process-video", retries: 3 },
@@ -77,7 +128,6 @@ export const processVideo = inngest.createFunction(
         /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([^&\n?#]+)/
       );
       const ytVideoId = videoIdMatch?.[1];
-
       if (!ytVideoId) throw new Error("Invalid YouTube URL");
 
       const response = await fetch(
@@ -91,21 +141,13 @@ export const processVideo = inngest.createFunction(
       );
 
       const data = await response.json();
-      
       if (!data.formats?.length) throw new Error("No download formats available");
 
-      // Find audio-only format for transcription (smaller file)
-      const audioFormat = data.formats.find(
-        (f: { mimeType?: string }) => f.mimeType?.includes("audio/")
-      );
-
-      // Find video format for clips
-      const videoFormat =
-        data.formats.find(
-          (f: { mimeType?: string; qualityLabel?: string }) =>
-            f.mimeType?.includes("video/mp4") &&
-            (f.qualityLabel === "720p" || f.qualityLabel === "480p")
-        ) || data.formats.find((f: { mimeType?: string }) => f.mimeType?.includes("video/mp4"));
+      const audioFormat = data.formats.find((f: { mimeType?: string }) => f.mimeType?.includes("audio/"));
+      const videoFormat = data.formats.find(
+        (f: { mimeType?: string; qualityLabel?: string }) =>
+          f.mimeType?.includes("video/mp4") && (f.qualityLabel === "720p" || f.qualityLabel === "480p")
+      ) || data.formats.find((f: { mimeType?: string }) => f.mimeType?.includes("video/mp4"));
 
       return {
         title: data.title || "Untitled",
@@ -115,7 +157,7 @@ export const processVideo = inngest.createFunction(
       };
     });
 
-    if (!videoInfo.audioUrl) {
+    if (!videoInfo.audioUrl || !videoInfo.videoUrl) {
       await getSupabase()
         .from("videos")
         .update({ status: "failed", error_message: "Could not get download URL" })
@@ -123,25 +165,49 @@ export const processVideo = inngest.createFunction(
       return { success: false, error: "Download failed" };
     }
 
-    // Update video title
     await getSupabase()
       .from("videos")
       .update({ title: videoInfo.title, duration_seconds: videoInfo.duration })
       .eq("id", videoId);
 
+    // Step 2: Upload video to Supabase Storage (so Creatomate can access it)
+    const publicVideoUrl = await step.run("upload-video", async () => {
+      console.log("Downloading video to upload to storage...");
+      const videoResponse = await fetch(videoInfo.videoUrl);
+      const videoBuffer = await videoResponse.arrayBuffer();
+      
+      const fileName = `${videoId}/source.mp4`;
+      console.log(`Uploading ${videoBuffer.byteLength} bytes to storage...`);
+      
+      const { error: uploadError } = await getSupabase().storage
+        .from("videos")
+        .upload(fileName, videoBuffer, {
+          contentType: "video/mp4",
+          upsert: true,
+        });
 
-    // Step 2: Transcribe with Whisper
+      if (uploadError) {
+        console.error("Upload error:", uploadError);
+        throw new Error(`Failed to upload video: ${uploadError.message}`);
+      }
+
+      const { data: urlData } = getSupabase().storage
+        .from("videos")
+        .getPublicUrl(fileName);
+
+      console.log("Video uploaded, public URL:", urlData.publicUrl);
+      return urlData.publicUrl;
+    });
+
+    // Step 3: Transcribe with Whisper (use original URL since it works for direct fetch)
     const transcript = await step.run("transcribe-video", async () => {
       await getSupabase()
         .from("videos")
         .update({ status: "transcribing", updated_at: new Date().toISOString() })
         .eq("id", videoId);
 
-      // Download audio for Whisper (max 25MB)
       const audioResponse = await fetch(videoInfo.audioUrl);
       const audioBuffer = await audioResponse.arrayBuffer();
-
-      // Create a File object for OpenAI
       const audioFile = new File([audioBuffer], "audio.mp3", { type: "audio/mpeg" });
 
       const response = await getOpenAI().audio.transcriptions.create({
@@ -157,7 +223,6 @@ export const processVideo = inngest.createFunction(
         text: seg.text.trim(),
       }));
 
-      // Save transcript to database
       await getSupabase().from("transcripts").insert({
         video_id: videoId,
         full_text: response.text,
@@ -172,7 +237,8 @@ export const processVideo = inngest.createFunction(
       };
     });
 
-    // Step 3: Find highlights with GPT-4
+
+    // Step 4: Find highlights with GPT-4
     const highlights = await step.run("find-highlights", async () => {
       await getSupabase()
         .from("videos")
@@ -183,23 +249,17 @@ export const processVideo = inngest.createFunction(
         .map((s) => `[${formatTime(s.start)} - ${formatTime(s.end)}] ${s.text}`)
         .join("\n");
 
-      const prompt = `You are a viral content expert. Analyze this video transcript and find 3-5 clips that would perform well on TikTok/Reels/Shorts.
+      const prompt = `You are a viral content expert. Find the SINGLE BEST clip for TikTok/Reels/Shorts.
 
 TRANSCRIPT:
 ${formattedTranscript}
 
 VIDEO DURATION: ${formatTime(transcript.duration)}
 
-For each clip:
-1. Catchy title (max 50 chars)
-2. Start and end timestamps (15-60 seconds each)
-3. Viral score (1-100)
-4. Why it would go viral
+Return ONLY JSON array with exactly 1 clip:
+[{"title": "Catchy Title", "startTime": 0, "endTime": 30, "viralScore": 85, "reason": "Why viral"}]
 
-Look for: Strong hooks, emotional moments, valuable insights, controversial statements.
-
-Return ONLY a JSON array:
-[{"title": "...", "startTime": 0, "endTime": 30, "viralScore": 85, "reason": "..."}]`;
+Rules: title max 50 chars, clip 15-60 seconds, pick the most engaging hook/insight/emotion.`;
 
       const response = await getOpenAI().chat.completions.create({
         model: "gpt-4o-mini",
@@ -209,9 +269,9 @@ Return ONLY a JSON array:
 
       const content = response.choices[0]?.message?.content || "[]";
       const jsonMatch = content.match(/\[[\s\S]*\]/);
-      const clips: Omit<ClipSuggestion, "transcript">[] = JSON.parse(jsonMatch?.[0] || "[]");
+      const clips = JSON.parse(jsonMatch?.[0] || "[]");
 
-      return clips.map((clip) => ({
+      return clips.map((clip: { title: string; startTime: number; endTime: number; viralScore: number; reason: string }) => ({
         ...clip,
         transcript: getTranscriptForRange(transcript.segments, clip.startTime, clip.endTime),
       }));
@@ -225,42 +285,56 @@ Return ONLY a JSON array:
       return { success: false, error: "No highlights found" };
     }
 
-
-    // Step 4: Create clip records
-    const clipResults = await step.run("create-clips", async () => {
+    // Step 5: Generate clips with Creatomate (using public Supabase URL)
+    await step.run("create-clips", async () => {
       await getSupabase()
         .from("videos")
         .update({ status: "generating", updated_at: new Date().toISOString() })
         .eq("id", videoId);
 
-      const createdClips = [];
+      for (let i = 0; i < highlights.length; i++) {
+        const clip = highlights[i];
+        console.log(`Creating clip ${i + 1}/${highlights.length}: ${clip.title}`);
 
-      for (const clip of highlights) {
-        const { data, error } = await getSupabase()
-          .from("clips")
-          .insert({
-            video_id: videoId,
-            user_id: userId,
-            title: clip.title,
-            start_time: clip.startTime,
-            end_time: clip.endTime,
-            transcript: clip.transcript,
-            viral_score: clip.viralScore,
-            highlights: [{ type: "ai", description: clip.reason }],
-            status: "completed",
-          })
-          .select()
-          .single();
+        let clipUrl: string | null = null;
+        let clipStatus = "completed";
 
-        if (!error && data) {
-          createdClips.push(data);
+        // Render clip with Creatomate (using public Supabase URL)
+        try {
+          clipUrl = await renderClipWithCreatomate(
+            publicVideoUrl,
+            clip.startTime,
+            clip.endTime
+          );
+          console.log(`Clip ${i + 1} rendered: ${clipUrl}`);
+        } catch (error) {
+          console.error(`Failed to render clip ${i + 1}:`, error);
+          clipStatus = "failed";
+        }
+
+        // Save clip to database (duration_seconds is auto-generated from start/end)
+        const { error: insertError } = await getSupabase().from("clips").insert({
+          video_id: videoId,
+          user_id: userId,
+          title: clip.title,
+          start_time: clip.startTime,
+          end_time: clip.endTime,
+          transcript: clip.transcript,
+          viral_score: clip.viralScore,
+          highlights: [{ type: "ai", description: clip.reason }],
+          status: clipStatus,
+          storage_path: clipUrl,
+        });
+
+        if (insertError) {
+          console.error(`Failed to save clip ${i + 1}:`, insertError);
+        } else {
+          console.log(`Clip ${i + 1} saved: ${clip.title}`);
         }
       }
-
-      return { clipsCreated: createdClips.length };
     });
 
-    // Step 5: Mark video as completed
+    // Step 6: Complete
     await step.run("complete", async () => {
       await getSupabase()
         .from("videos")
@@ -268,11 +342,6 @@ Return ONLY a JSON array:
         .eq("id", videoId);
     });
 
-    return {
-      success: true,
-      videoId,
-      clipsCreated: clipResults.clipsCreated,
-      duration: transcript.duration,
-    };
+    return { success: true, videoId, clipsCreated: highlights.length };
   }
 );
