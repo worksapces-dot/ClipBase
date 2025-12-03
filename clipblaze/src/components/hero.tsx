@@ -1,8 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ArrowRightIcon, PlayIcon, SparklesIcon } from "./icons";
+import { RainbowButton } from "@/components/ui/rainbow-button";
+import { SparklesIcon } from "./icons";
 
 export function Hero() {
   return (
@@ -18,10 +18,10 @@ export function Hero() {
       <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-white/3 rounded-full blur-3xl animate-pulse-glow" style={{ animationDelay: '1.5s' }} />
 
       <div className="relative z-10 max-w-6xl mx-auto px-6 text-center">
-        <Badge variant="outline" className="mb-6 px-4 py-2 border-white/10 bg-white/5">
-          <SparklesIcon className="w-4 h-4 mr-2" />
+        <RainbowButton size="lg" className="mb-8 px-6 py-3 text-base rounded-full">
+          <SparklesIcon className="w-5 h-5 mr-2" />
           AI-Powered Video Editing
-        </Badge>
+        </RainbowButton>
 
         <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold tracking-tight mb-6">
           <span className="gradient-text">Turn long videos</span>
@@ -29,7 +29,7 @@ export function Hero() {
           <span className="text-white">into viral shorts</span>
         </h1>
 
-        <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-10">
+        <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed">
           ClipBlaze uses AI to find the best moments, add captions, emojis, and effects — 
           then exports ready-to-post clips in seconds.
         </p>
@@ -54,66 +54,12 @@ export function Hero() {
               </Button>
             </div>
           </div>
-          <p className="text-sm text-muted-foreground mt-3">
-            Or <button className="text-white underline underline-offset-2 hover:no-underline">upload a file</button> • Supports MP4, MOV, WebM up to 60 min
+          <p className="text-sm text-muted-foreground mt-4 tracking-wide">
+            Or <button className="text-white underline underline-offset-4 hover:no-underline">upload a file</button> · Supports MP4, MOV, WebM up to 60 min
           </p>
         </div>
 
-        {/* Video preview mockup */}
-        <div className="relative max-w-4xl mx-auto">
-          <div className="glass-card rounded-2xl p-2 glow-border">
-            <div className="relative aspect-video rounded-xl bg-gradient-to-br from-white/5 to-transparent overflow-hidden">
-              {/* Fake video player UI */}
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-20 h-20 rounded-full bg-white/10 flex items-center justify-center backdrop-blur-sm cursor-pointer hover:bg-white/20 transition-colors">
-                  <PlayIcon className="w-8 h-8 text-white ml-1" />
-                </div>
-              </div>
-              
-              {/* Fake timeline */}
-              <div className="absolute bottom-4 left-4 right-4">
-                <div className="h-1 bg-white/10 rounded-full overflow-hidden">
-                  <div className="h-full w-1/3 bg-white/50 rounded-full" />
-                </div>
-              </div>
 
-              {/* Floating elements */}
-              <div className="absolute top-4 right-4 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-sm text-xs">
-                🔥 Viral Score: 94
-              </div>
-              
-              <div className="absolute bottom-16 left-4 right-4 text-center">
-                <div className="inline-block px-4 py-2 rounded-lg bg-black/60 backdrop-blur-sm">
-                  <span className="text-white font-semibold">This is how you </span>
-                  <span className="text-yellow-400 font-bold">go viral</span>
-                  <span className="text-white font-semibold"> 🚀</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          {/* Floating badges */}
-          <div className="absolute -left-4 top-1/4 animate-float">
-            <div className="glass-card rounded-xl px-4 py-3 flex items-center gap-2">
-              <span className="text-2xl">✨</span>
-              <span className="text-sm font-medium">Auto Captions</span>
-            </div>
-          </div>
-          
-          <div className="absolute -right-4 top-1/3 animate-float" style={{ animationDelay: '1s' }}>
-            <div className="glass-card rounded-xl px-4 py-3 flex items-center gap-2">
-              <span className="text-2xl">🎯</span>
-              <span className="text-sm font-medium">Smart Crop</span>
-            </div>
-          </div>
-          
-          <div className="absolute -left-8 bottom-1/4 animate-float" style={{ animationDelay: '2s' }}>
-            <div className="glass-card rounded-xl px-4 py-3 flex items-center gap-2">
-              <span className="text-2xl">⚡</span>
-              <span className="text-sm font-medium">2min Export</span>
-            </div>
-          </div>
-        </div>
       </div>
     </section>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { ZapIcon, YoutubeIcon, TiktokIcon, InstagramIcon } from "./icons";
+import { DotText } from "./dot-text";
 
 export function Footer() {
   return (
@@ -27,13 +28,15 @@ export function Footer() {
           </div>
 
           <div className="flex items-center gap-6 text-sm text-muted-foreground">
-            <a href="#" className="hover:text-white transition-colors">Privacy</a>
-            <a href="#" className="hover:text-white transition-colors">Terms</a>
-            <a href="#" className="hover:text-white transition-colors">Contact</a>
+            <a href="/privacy" className="hover:text-white transition-colors">Privacy</a>
+            <a href="/terms" className="hover:text-white transition-colors">Terms</a>
+            <a href="/contact" className="hover:text-white transition-colors">Contact</a>
           </div>
         </div>
 
-        <div className="mt-8 pt-8 border-t border-white/5 text-center text-sm text-muted-foreground">
+        <DotText text="Go viral with ClipBlaze" />
+
+        <div className="pt-8 border-t border-white/5 text-center text-sm text-muted-foreground">
           © 2025 ClipBlaze. All rights reserved.
         </div>
       </div>
