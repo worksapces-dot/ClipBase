@@ -1,44 +1,78 @@
-import express from "express";
-import { processVideo } from "./processor";
+import { getPendingJobs, updateJobStatus, Job } from "./supabase";
+import { downloadVideo } from "./youtube";
+import * as fs from "fs";
+import * as path from "path";
 
-const app = express();
-app.use(express.json());
+const POLL_INTERVAL = 5000; // 5 seconds
+const TEMP_DIR = "./temp";
 
-const PORT = process.env.PORT || 3001;
-const API_SECRET = process.env.API_SECRET || "clipblaze-secret";
+// Ensure temp directory exists
+if (!fs.existsSync(TEMP_DIR)) {
+  fs.mkdirSync(TEMP_DIR, { recursive: true });
+}
 
-// Auth middleware
-const authenticate = (
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-) => {
-  const authHeader = req.headers.authorization;
-  if (authHeader !== `Bearer ${API_SECRET}`) {
-    return res.status(401).json({ error: "Unauthorized" });
+async function processJob(job: Job): Promise<void> {
+  console.log(`\nProcessing job ${job.id}`);
+  console.log(`YouTube URL: ${job.youtube_url}`);
+
+  const videoPath = path.join(TEMP_DIR, `${job.id}.mp4`);
+
+  try {
+    // Update status to processing
+    await updateJobStatus(job.id, "processing");
+
+    // Download the video
+    await downloadVideo(job.youtube_url, videoPath);
+
+    // TODO: Add video processing here (AI highlights, captions, etc.)
+
+    // For now, mark as completed
+    await updateJobStatus(job.id, "completed", {
+      output_url: `processed/${job.id}.mp4`,
+    });
+
+    console.log(`Job ${job.id} completed`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error(`Job ${job.id} failed:`, message);
+    await updateJobStatus(job.id, "failed", { error_message: message });
+  } finally {
+    // Cleanup temp file
+    if (fs.existsSync(videoPath)) {
+      fs.unlinkSync(videoPath);
+    }
   }
-  next();
-};
+}
 
-// Health check
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
 
-// Process video endpoint
-app.post("/process", authenticate, async (req, res) => {
-  const { videoId, youtubeUrl, userId } = req.body;
+async function pollForJobs(): Promise<void> {
+  console.log("Checking for pending jobs...");
 
-  if (!videoId || !youtubeUrl || !userId) {
-    return res.status(400).json({ error: "Missing required fields" });
+  const jobs = await getPendingJobs();
+
+  if (jobs.length === 0) {
+    console.log("No pending jobs");
+    return;
   }
 
-  // Start processing in background
-  processVideo(videoId, youtubeUrl, userId).catch(console.error);
+  console.log(`Found ${jobs.length} pending job(s)`);
 
-  res.json({ success: true, message: "Processing started" });
-});
+  for (const job of jobs) {
+    await processJob(job);
+  }
+}
 
-app.listen(PORT, () => {
-  console.log(`ClipBlaze Worker running on port ${PORT}`);
-});
+async function main(): Promise<void> {
+  console.log("=================================");
+  console.log("  ClipBlaze Worker Started");
+  console.log("=================================");
+  console.log(`Poll interval: ${POLL_INTERVAL}ms`);
+
+  // Initial poll
+  await pollForJobs();
+
+  // Continue polling
+  setInterval(pollForJobs, POLL_INTERVAL);
+}
+
+main().catch(console.error);

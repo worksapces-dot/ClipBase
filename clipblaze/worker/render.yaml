@@ -1,22 +1,13 @@
-# Render Blueprint for ClipBlaze Worker
-# Deploy with: render blueprint apply
-
 services:
-  - type: web
+  - type: worker
     name: clipblaze-worker
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    plan: starter # $7/month, 512MB RAM - upgrade for longer videos
-    healthCheckPath: /health
     envVars:
-      - key: PORT
-        value: 3001
-      - key: API_SECRET
-        sync: false # Set manually in Render dashboard
       - key: SUPABASE_URL
         sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
+      - key: SUPABASE_SERVICE_KEY
         sync: false
-      - key: OPENAI_API_KEY
+      - key: RAPIDAPI_KEY
         sync: false
