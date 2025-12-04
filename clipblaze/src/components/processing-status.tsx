@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { X } from "lucide-react";
 
 type Status = 'pending' | 'downloading' | 'transcribing' | 'analyzing' | 'generating' | 'completed' | 'failed';
 
@@ -9,6 +11,7 @@ interface ProcessingStatusProps {
   videoId: string;
   initialStatus?: Status;
   onComplete?: () => void;
+  onCancel?: () => void;
 }
 
 const steps: { status: Status; label: string; icon: string }[] = [
@@ -19,9 +22,26 @@ const steps: { status: Status; label: string; icon: string }[] = [
   { status: 'completed', label: 'Done!', icon: '✅' },
 ];
 
-export function ProcessingStatus({ videoId, initialStatus = 'pending', onComplete }: ProcessingStatusProps) {
+export function ProcessingStatus({ videoId, initialStatus = 'pending', onComplete, onCancel }: ProcessingStatusProps) {
   const [status, setStatus] = useState<Status>(initialStatus);
   const [error, setError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+
+  const handleCancel = async () => {
+    setCancelling(true);
+    try {
+      const res = await fetch(`/api/videos/${videoId}/cancel`, { method: 'POST' });
+      if (res.ok) {
+        setStatus('failed');
+        setError('Cancelled by user');
+        onCancel?.();
+      }
+    } catch (err) {
+      console.error('Cancel error:', err);
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   useEffect(() => {
     if (status === 'completed' || status === 'failed') return;
@@ -66,8 +86,20 @@ export function ProcessingStatus({ videoId, initialStatus = 'pending', onComplet
     <div className="bg-white/5 border border-white/10 rounded-xl p-6">
       <div className="flex items-center justify-between mb-6">
         <h3 className="text-lg font-semibold">Processing your video...</h3>
-        <div className="text-sm text-muted-foreground">
-          {currentStepIndex + 1} / {steps.length}
+        <div className="flex items-center gap-3">
+          <div className="text-sm text-muted-foreground">
+            {currentStepIndex + 1} / {steps.length}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleCancel}
+            disabled={cancelling}
+            className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+          >
+            <X className="w-4 h-4 mr-1" />
+            {cancelling ? 'Stopping...' : 'Stop'}
+          </Button>
         </div>
       </div>
 
