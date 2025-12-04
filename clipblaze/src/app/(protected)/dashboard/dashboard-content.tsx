@@ -40,12 +40,21 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
     v.status !== "completed" && v.status !== "failed"
   );
 
-  // Fetch subscription info
+  // Fetch and sync subscription info
   useEffect(() => {
-    fetch("/api/subscription")
-      .then((res) => res.json())
-      .then((data) => setSubscription(data))
-      .catch(console.error);
+    const syncAndFetch = async () => {
+      try {
+        // First sync with Polar
+        await fetch("/api/subscription/sync", { method: "POST" });
+        // Then fetch updated subscription
+        const res = await fetch("/api/subscription");
+        const data = await res.json();
+        setSubscription(data);
+      } catch (error) {
+        console.error("Subscription fetch error:", error);
+      }
+    };
+    syncAndFetch();
   }, []);
 
   // Handle URL from hero redirect

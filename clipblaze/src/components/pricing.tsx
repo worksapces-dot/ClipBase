@@ -1,14 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { cn } from "@/lib/utils";
 
 const plans = [
   {
+    id: "free",
     name: "Free",
-    price: { monthly: 0, yearly: 0 },
+    price: 0,
     description: "Perfect for trying out ClipBlaze",
     features: [
       "3 clips per month",
@@ -17,54 +19,115 @@ const plans = [
       "ClipBlaze watermark",
       "Email support",
     ],
-    cta: "Start Free",
+    cta: "Current Plan",
     popular: false,
+    disabled: true,
   },
   {
+    id: "starter",
+    name: "Starter",
+    price: 9,
+    description: "For casual content creators",
+    features: [
+      "10 clips per month",
+      "1080p export quality",
+      "Advanced captions",
+      "No watermark",
+      "Priority support",
+    ],
+    cta: "Get Starter",
+    popular: false,
+    disabled: false,
+  },
+  {
+    id: "pro",
     name: "Pro",
     badge: "Popular",
-    price: { monthly: 19, yearly: 15 },
-    description: "For content creators who want more",
+    price: 29,
+    description: "For serious content creators",
     features: [
-      "Unlimited clips",
+      "50 clips per month",
       "1080p export quality",
       "Advanced captions & emojis",
       "No watermark",
       "Priority support",
-      "Custom branding",
-      "YouTube link import",
-      "Batch processing",
+      "Auto YouTube upload",
+      "Auto Instagram upload",
     ],
-    cta: "Upgrade to Pro",
+    cta: "Get Pro",
     popular: true,
+    disabled: false,
   },
   {
-    name: "Enterprise",
-    price: { monthly: 49, yearly: 39 },
+    id: "unlimited",
+    name: "Unlimited",
+    price: 79,
     description: "For teams and agencies",
     features: [
-      "Everything in Pro",
+      "Unlimited clips",
       "4K export quality",
-      "Team collaboration",
+      "Everything in Pro",
       "API access",
       "Custom integrations",
       "Dedicated support",
-      "SLA guarantee",
-      "Advanced analytics",
     ],
-    cta: "Contact Sales",
+    cta: "Get Unlimited",
     popular: false,
+    disabled: false,
   },
 ];
 
 const CheckIcon = () => (
-  <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+  <svg
+    className="w-4 h-4 text-white"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="3"
+  >
     <polyline points="20 6 9 17 4 12" />
   </svg>
 );
 
-export function Pricing() {
-  const [isYearly, setIsYearly] = useState(false);
+interface PricingProps {
+  currentPlan?: string;
+  isLoggedIn?: boolean;
+}
+
+export function Pricing({ currentPlan = "free", isLoggedIn = false }: PricingProps) {
+  const [loading, setLoading] = useState<string | null>(null);
+  const router = useRouter();
+
+  const handleUpgrade = async (planId: string) => {
+    if (!isLoggedIn) {
+      router.push("/login?redirect=/dashboard");
+      return;
+    }
+
+    if (planId === "free" || planId === currentPlan) return;
+
+    setLoading(planId);
+    try {
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: planId }),
+      });
+
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        console.error("Checkout error:", data.error);
+        alert("Failed to start checkout. Please try again.");
+      }
+    } catch (error) {
+      console.error("Checkout error:", error);
+      alert("Failed to start checkout. Please try again.");
+    } finally {
+      setLoading(null);
+    }
+  };
 
   return (
     <section id="pricing" className="py-32 relative">
@@ -78,95 +141,89 @@ export function Pricing() {
           </p>
         </div>
 
-        {/* Toggle */}
-        <div className="flex items-center justify-center gap-4 mb-12">
-          <div className="inline-flex items-center p-1 rounded-full bg-white/5 border border-white/10">
-            <button
-              onClick={() => setIsYearly(false)}
-              className={cn(
-                "px-4 py-2 rounded-full text-sm font-medium transition-all",
-                !isYearly ? "bg-white text-black" : "text-white/60 hover:text-white"
-              )}
-            >
-              Monthly
-            </button>
-            <button
-              onClick={() => setIsYearly(true)}
-              className={cn(
-                "px-4 py-2 rounded-full text-sm font-medium transition-all flex items-center gap-2",
-                isYearly ? "bg-white text-black" : "text-white/60 hover:text-white"
-              )}
-            >
-              Yearly
-              <span className={cn(
-                "text-xs px-2 py-0.5 rounded-full",
-                isYearly ? "bg-green-500 text-white" : "bg-green-500/20 text-green-400"
-              )}>
-                -20%
-              </span>
-            </button>
-          </div>
-        </div>
-
         {/* Pricing Cards */}
-        <div className="grid md:grid-cols-3 gap-6">
-          {plans.map((plan, index) => (
-            <div
-              key={index}
-              className={cn(
-                "relative rounded-2xl p-6 flex flex-col",
-                plan.popular
-                  ? "bg-white/[0.08] border-2 border-blue-500/50"
-                  : "bg-white/[0.03] border border-white/10"
-              )}
-            >
-              {plan.badge && (
-                <div className="absolute -top-3 left-6">
-                  <span className="px-3 py-1 rounded-full bg-blue-500 text-white text-xs font-medium">
-                    {plan.badge}
-                  </span>
-                </div>
-              )}
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {plans.map((plan) => {
+            const isCurrentPlan = plan.id === currentPlan;
+            const isUpgrade = plans.findIndex(p => p.id === plan.id) > plans.findIndex(p => p.id === currentPlan);
 
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold text-white mb-2">{plan.name}</h3>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-bold text-white">
-                    ${isYearly ? plan.price.yearly : plan.price.monthly}
-                  </span>
-                  <span className="text-muted-foreground">/month</span>
-                </div>
-                <p className="text-sm text-muted-foreground mt-2">{plan.description}</p>
-              </div>
-
-              {plan.popular ? (
-                <ShimmerButton className="w-full mb-6">
-                  {plan.cta}
-                </ShimmerButton>
-              ) : (
-                <Button
-                  variant="outline"
-                  className="w-full mb-6 border-white/20 hover:bg-white/10"
-                >
-                  {plan.cta}
-                </Button>
-              )}
-
-              <div className="space-y-3 flex-1">
-                <p className="text-sm text-white/60 font-medium">
-                  {index === 0 ? "Includes:" : `Everything in ${plans[index - 1]?.name} +`}
-                </p>
-                {plan.features.map((feature, i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <div className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center shrink-0">
-                      <CheckIcon />
-                    </div>
-                    <span className="text-sm text-white/80">{feature}</span>
+            return (
+              <div
+                key={plan.id}
+                className={cn(
+                  "relative rounded-2xl p-6 flex flex-col",
+                  plan.popular
+                    ? "bg-white/[0.08] border-2 border-emerald-500/50"
+                    : "bg-white/[0.03] border border-white/10",
+                  isCurrentPlan && "ring-2 ring-emerald-500"
+                )}
+              >
+                {plan.badge && (
+                  <div className="absolute -top-3 left-6">
+                    <span className="px-3 py-1 rounded-full bg-emerald-500 text-white text-xs font-medium">
+                      {plan.badge}
+                    </span>
                   </div>
-                ))}
+                )}
+
+                {isCurrentPlan && (
+                  <div className="absolute -top-3 right-6">
+                    <span className="px-3 py-1 rounded-full bg-white/20 text-white text-xs font-medium">
+                      Current
+                    </span>
+                  </div>
+                )}
+
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-white mb-2">
+                    {plan.name}
+                  </h3>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-4xl font-bold text-white">
+                      ${plan.price}
+                    </span>
+                    <span className="text-muted-foreground">/month</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    {plan.description}
+                  </p>
+                </div>
+
+                {plan.popular && isUpgrade ? (
+                  <ShimmerButton
+                    className="w-full mb-6"
+                    onClick={() => handleUpgrade(plan.id)}
+                    disabled={loading === plan.id || isCurrentPlan}
+                  >
+                    {loading === plan.id ? "Loading..." : isCurrentPlan ? "Current Plan" : plan.cta}
+                  </ShimmerButton>
+                ) : (
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "w-full mb-6 border-white/20 hover:bg-white/10",
+                      isCurrentPlan && "bg-white/10"
+                    )}
+                    onClick={() => handleUpgrade(plan.id)}
+                    disabled={plan.disabled || loading === plan.id || isCurrentPlan}
+                  >
+                    {loading === plan.id ? "Loading..." : isCurrentPlan ? "Current Plan" : plan.cta}
+                  </Button>
+                )}
+
+                <div className="space-y-3 flex-1">
+                  {plan.features.map((feature, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <div className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center shrink-0">
+                        <CheckIcon />
+                      </div>
+                      <span className="text-sm text-white/80">{feature}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </section>

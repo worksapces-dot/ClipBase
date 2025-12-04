@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ShimmerButton } from "@/components/ui/shimmer-button";
@@ -84,9 +84,9 @@ const CheckIcon = () => (
 );
 
 export function PricingContent({
-  currentPlan,
-  clipsUsed,
-  clipsLimit,
+  currentPlan: initialPlan,
+  clipsUsed: initialClipsUsed,
+  clipsLimit: initialClipsLimit,
 }: {
   currentPlan: string;
   clipsUsed: number;
@@ -94,6 +94,39 @@ export function PricingContent({
 }) {
   const [isYearly, setIsYearly] = useState(false);
   const [loading, setLoading] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [currentPlan, setCurrentPlan] = useState(initialPlan);
+  const [clipsUsed, setClipsUsed] = useState(initialClipsUsed);
+  const [clipsLimit, setClipsLimit] = useState(initialClipsLimit);
+
+  // Auto-sync subscription on mount
+  useEffect(() => {
+    syncSubscription();
+  }, []);
+
+  const syncSubscription = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/subscription/sync", { method: "POST" });
+      const data = await res.json();
+      if (data.synced && data.plan) {
+        setCurrentPlan(data.plan);
+        setClipsLimit(data.clipsLimit || initialClipsLimit);
+        // Refresh full subscription data
+        const subRes = await fetch("/api/subscription");
+        const subData = await subRes.json();
+        if (subData.plan) {
+          setCurrentPlan(subData.plan);
+          setClipsUsed(subData.clipsUsed);
+          setClipsLimit(subData.clipsLimit);
+        }
+      }
+    } catch (error) {
+      console.error("Sync error:", error);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const handleUpgrade = async (planId: string) => {
     if (planId === "free" || planId === currentPlan) return;
@@ -109,6 +142,10 @@ export function PricingContent({
       const data = await res.json();
       if (data.url) {
         window.location.href = data.url;
+      } else if (data.error?.includes("sync")) {
+        // Need to sync first
+        await syncSubscription();
+        alert("Your subscription has been synced. Please try again.");
       } else {
         alert(data.error || "Failed to create checkout session");
       }
@@ -145,13 +182,27 @@ export function PricingContent({
           <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 via-transparent to-purple-500/10" />
           <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <p className="text-sm text-muted-foreground mb-1">Current Usage</p>
+              <div className="flex items-center gap-2 mb-1">
+                <p className="text-sm text-muted-foreground">Current Usage</p>
+                {syncing && (
+                  <span className="text-xs text-blue-400 animate-pulse">Syncing...</span>
+                )}
+              </div>
               <p className="text-3xl font-bold">
                 {clipsUsed} / {clipsLimit === -1 ? "∞" : clipsLimit} clips
               </p>
-              <p className="text-sm text-muted-foreground mt-1">
-                {currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)} Plan
-              </p>
+              <div className="flex items-center gap-2 mt-1">
+                <p className="text-sm text-muted-foreground">
+                  {currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)} Plan
+                </p>
+                <button
+                  onClick={syncSubscription}
+                  disabled={syncing}
+                  className="text-xs text-blue-400 hover:text-blue-300 underline disabled:opacity-50"
+                >
+                  {syncing ? "Syncing..." : "Sync"}
+                </button>
+              </div>
             </div>
             {clipsLimit !== -1 && (
               <div className="w-full md:w-64">
