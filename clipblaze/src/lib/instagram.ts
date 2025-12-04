@@ -5,13 +5,10 @@ const INSTAGRAM_APP_ID = process.env.INSTAGRAM_APP_ID!;
 const INSTAGRAM_APP_SECRET = process.env.INSTAGRAM_APP_SECRET!;
 const REDIRECT_URI = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/instagram/callback`;
 
-// Scopes needed for Instagram content publishing
-const SCOPES = [
-  "instagram_basic",
-  "instagram_content_publish",
-  "pages_show_list",
-  "pages_read_engagement",
-].join(",");
+// Scopes for Instagram
+// Note: instagram_content_publish requires Facebook App Review for production
+// In development mode, only works for app admins/testers
+const SCOPES = "instagram_basic,pages_show_list";
 
 export function getAuthUrl(): string {
   const params = new URLSearchParams({
