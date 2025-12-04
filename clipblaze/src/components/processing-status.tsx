@@ -172,8 +172,7 @@ export function ProcessingStatus({
             <div className="relative">
               {loadingStates.map((state, index) => {
                 const isActive = state.status === status;
-                const isCompleted =
-                  currentStepIndex > index || status === "completed";
+                const isCompleted = currentStepIndex > index;
                 const isPending = currentStepIndex < index;
                 const distance = Math.abs(index - currentStepIndex);
                 const opacity = Math.max(1 - distance * 0.15, 0.3);
