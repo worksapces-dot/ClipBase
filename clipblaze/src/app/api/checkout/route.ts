@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
-import { POLAR_PRODUCTS } from "@/lib/polar";
+import { POLAR_PRODUCTS, PLAN_LIMITS } from "@/lib/polar";
 
 const POLAR_API_URL = "https://sandbox-api.polar.sh/v1";
 
@@ -22,15 +22,60 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
     }
 
+    // Check if user has existing Polar subscription
+    const { data: subscription } = await supabase
+      .from("subscriptions")
+      .select("*")
+      .eq("user_id", user.id)
+      .single();
+
     const successUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/dashboard?upgraded=true`;
 
-    // First, save user_id to metadata for webhook
-    await supabase
-      .from("subscriptions")
-      .update({ updated_at: new Date().toISOString() })
-      .eq("user_id", user.id);
+    // If user has active Polar subscription, update it instead of creating new checkout
+    if (subscription?.polar_subscription_id && subscription.plan !== "free") {
+      console.log("Updating existing subscription:", subscription.polar_subscription_id);
 
-    // Create checkout session via Polar API
+      const updateRes = await fetch(
+        `${POLAR_API_URL}/subscriptions/${subscription.polar_subscription_id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.POLAR_ACCESS_TOKEN}`,
+          },
+          body: JSON.stringify({
+            product_id: product.id,
+          }),
+        }
+      );
+
+      const updateText = await updateRes.text();
+      console.log("Polar subscription update response:", updateRes.status, updateText);
+
+      if (!updateRes.ok) {
+        console.error("Failed to update subscription:", updateText);
+        return NextResponse.json(
+          { error: "Failed to update subscription" },
+          { status: 500 }
+        );
+      }
+
+      // Update local subscription immediately
+      const newPlan = plan as keyof typeof PLAN_LIMITS;
+      await supabase
+        .from("subscriptions")
+        .update({
+          plan: newPlan,
+          clips_limit: PLAN_LIMITS[newPlan],
+          updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", user.id);
+
+      // Redirect to success page directly
+      return NextResponse.json({ url: successUrl });
+    }
+
+    // Create new checkout for users without active subscription
     const checkoutRes = await fetch(`${POLAR_API_URL}/checkouts/`, {
       method: "POST",
       headers: {
@@ -42,8 +87,8 @@ export async function POST(request: NextRequest) {
         success_url: successUrl,
         customer_email: user.email,
         customer_name: user.user_metadata?.full_name || user.email?.split("@")[0],
-        customer_metadata: {
-          supabase_user_id: user.id,
+        metadata: {
+          user_id: user.id,
         },
       }),
     });
