@@ -9,6 +9,7 @@ import { ClipCard } from "@/components/clip-card";
 import { Video, Clip } from "@/lib/database.types";
 import { Button } from "@/components/ui/button";
 import { Confetti, ConfettiRef } from "@/components/ui/confetti";
+import { YouTubeConnection } from "@/components/youtube-connection";
 
 type VideoWithClips = Video & { clips: Clip[] };
 
@@ -204,6 +205,11 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
             )}
           </div>
         )}
+      </div>
+
+      {/* YouTube Connection */}
+      <div className="mb-8">
+        <YouTubeConnection />
       </div>
 
       {/* Usage Limit Warning */}

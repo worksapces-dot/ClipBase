@@ -381,7 +381,90 @@ Rules: title max 50 chars, clip 15-60 seconds, pick the most engaging hook/insig
       }
     });
 
-    // Step 6: Complete
+    // Step 6: Auto-upload to YouTube if enabled
+    await step.run("youtube-upload", async () => {
+      // Check if user has YouTube connected with auto-upload enabled
+      const { data: ytConnection } = await getSupabase()
+        .from("youtube_connections")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("auto_upload_enabled", true)
+        .single();
+
+      if (!ytConnection) {
+        console.log("YouTube auto-upload not enabled for user");
+        return;
+      }
+
+      // Get clips that were just created
+      const { data: clips } = await getSupabase()
+        .from("clips")
+        .select("*")
+        .eq("video_id", videoId)
+        .eq("status", "completed");
+
+      if (!clips?.length) return;
+
+      for (const clip of clips) {
+        if (!clip.storage_path) continue;
+
+        try {
+          console.log(`Uploading clip to YouTube: ${clip.title}`);
+          
+          // Update status to uploading
+          await getSupabase()
+            .from("clips")
+            .update({ youtube_upload_status: "uploading" })
+            .eq("id", clip.id);
+
+          // Upload to YouTube
+          const { uploadToYouTube, refreshAccessToken } = await import("../youtube");
+          
+          // Refresh token if needed
+          let accessToken = ytConnection.access_token;
+          if (ytConnection.token_expires_at && new Date(ytConnection.token_expires_at) < new Date()) {
+            const newTokens = await refreshAccessToken(ytConnection.refresh_token);
+            accessToken = newTokens.access_token!;
+            
+            // Update tokens in database
+            await getSupabase()
+              .from("youtube_connections")
+              .update({
+                access_token: accessToken,
+                token_expires_at: newTokens.expiry_date ? new Date(newTokens.expiry_date).toISOString() : null,
+              })
+              .eq("id", ytConnection.id);
+          }
+
+          const result = await uploadToYouTube(
+            accessToken,
+            ytConnection.refresh_token,
+            clip.storage_path,
+            clip.title || "Viral Clip",
+            clip.transcript || "Created with ClipBlaze"
+          );
+
+          // Update clip with YouTube video ID
+          await getSupabase()
+            .from("clips")
+            .update({
+              youtube_video_id: result.videoId,
+              youtube_upload_status: "uploaded",
+            })
+            .eq("id", clip.id);
+
+          console.log(`Clip uploaded to YouTube: ${result.url}`);
+        } catch (error) {
+          console.error(`Failed to upload clip to YouTube:`, error);
+          await getSupabase()
+            .from("clips")
+            .update({ youtube_upload_status: "failed" })
+            .eq("id", clip.id);
+        }
+      }
+    });
+
+    // Step 7: Complete
     await step.run("complete", async () => {
       await getSupabase()
         .from("videos")
