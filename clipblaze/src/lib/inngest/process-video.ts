@@ -176,72 +176,55 @@ export const processVideo = inngest.createFunction(
 
       console.log("Fetching video for:", ytVideoId);
       
-      // Use Apify YouTube Video Downloader
+      // Use Apify YouTube Video Downloader (epctex) - run synchronously
       const APIFY_TOKEN = process.env.APIFY_API_TOKEN!;
       
-      // Start the Apify actor
-      console.log("Starting Apify YouTube downloader...");
+      console.log("Starting Apify YouTube downloader with URL:", youtubeUrl);
+      
+      // Run actor synchronously (waits for result) - using correct input format per docs
       const runResponse = await fetch(
-        `https://api.apify.com/v2/acts/epctex~youtube-video-downloader/runs?token=${APIFY_TOKEN}`,
+        `https://api.apify.com/v2/acts/epctex~youtube-video-downloader/run-sync-get-dataset-items?token=${APIFY_TOKEN}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            startUrls: [{ url: youtubeUrl }],
+            startUrls: [youtubeUrl],
             quality: "720",
-            format: "mp4",
+            useFfmpeg: false,
+            includeFailedVideos: false,
+            proxy: {
+              useApifyProxy: true,
+              apifyProxyGroups: ["RESIDENTIAL"],
+            },
           }),
         }
       );
 
       if (!runResponse.ok) {
         const errorText = await runResponse.text();
-        console.log("Apify error:", errorText);
-        throw new Error(`Apify API error: ${runResponse.status}`);
+        console.log("Apify error response:", errorText);
+        throw new Error(`Apify API error: ${runResponse.status} - ${errorText.substring(0, 200)}`);
       }
 
-      const runData = await runResponse.json();
-      const runId = runData.data?.id;
-      console.log("Apify run started:", runId);
-
-      // Wait for the actor to finish (poll status)
-      let downloadUrl: string | null = null;
-      let videoTitle = "YouTube Video";
+      const results = await runResponse.json();
+      console.log("Apify results:", JSON.stringify(results).substring(0, 500));
       
-      for (let i = 0; i < 60; i++) {
-        await new Promise(r => setTimeout(r, 3000)); // Wait 3 seconds
-        
-        const statusResponse = await fetch(
-          `https://api.apify.com/v2/actor-runs/${runId}?token=${APIFY_TOKEN}`
-        );
-        const statusData = await statusResponse.json();
-        const status = statusData.data?.status;
-        
-        console.log(`Apify status (${i + 1}/60):`, status);
-        
-        if (status === "SUCCEEDED") {
-          // Get the results
-          const datasetId = statusData.data?.defaultDatasetId;
-          const resultsResponse = await fetch(
-            `https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}`
-          );
-          const results = await resultsResponse.json();
-          
-          if (results.length > 0) {
-            downloadUrl = results[0].downloadUrl || results[0].url;
-            videoTitle = results[0].title || "YouTube Video";
-          }
-          break;
-        } else if (status === "FAILED" || status === "ABORTED") {
-          throw new Error("Apify actor failed - video may be restricted");
-        }
+      if (!results || results.length === 0) {
+        throw new Error("No results from Apify - video may be unavailable or restricted");
       }
 
+      const result = results[0];
+      // Per docs: result has sourceUrl and downloadUrl
+      const downloadUrl = result.downloadUrl;
+      const videoTitle = "YouTube Video"; // This actor doesn't return title
+      
       if (!downloadUrl) {
-        throw new Error("Failed to get download URL from Apify");
+        console.log("Full Apify result:", JSON.stringify(result));
+        throw new Error("No download URL in Apify result - video may be restricted");
       }
 
       console.log("Got download URL:", downloadUrl.substring(0, 100));
+      console.log("Video title:", videoTitle);
       
       // Download the video
       const videoResponse = await fetch(downloadUrl);
@@ -251,6 +234,10 @@ export const processVideo = inngest.createFunction(
       
       const videoBuffer = await videoResponse.arrayBuffer();
       console.log(`Downloaded ${videoBuffer.byteLength} bytes`);
+      
+      if (videoBuffer.byteLength < 10000) {
+        throw new Error("Downloaded file too small - may have failed");
+      }
 
       // Upload to Supabase Storage
       const fileName = `${videoId}/source.mp4`;
