@@ -243,19 +243,22 @@ export const processVideo = inngest.createFunction(
       return urlData.publicUrl;
     });
 
-    // Step 3: Transcribe with Whisper (use original URL since it works for direct fetch)
+    // Step 3: Transcribe with Whisper (use the video file since audio format may vary)
     const transcript = await step.run("transcribe-video", async () => {
       await getSupabase()
         .from("videos")
         .update({ status: "transcribing", updated_at: new Date().toISOString() })
         .eq("id", videoId);
 
-      const audioResponse = await fetch(videoInfo.audioUrl);
-      const audioBuffer = await audioResponse.arrayBuffer();
-      const audioFile = new File([audioBuffer], "audio.mp3", { type: "audio/mpeg" });
+      // Use the uploaded MP4 video file for transcription (Whisper supports mp4)
+      const videoResponse = await fetch(publicVideoUrl);
+      const videoBuffer = await videoResponse.arrayBuffer();
+      const videoFile = new File([videoBuffer], "video.mp4", { type: "video/mp4" });
+
+      console.log(`Transcribing video: ${videoBuffer.byteLength} bytes`);
 
       const response = await getOpenAI().audio.transcriptions.create({
-        file: audioFile,
+        file: videoFile,
         model: "whisper-1",
         response_format: "verbose_json",
         timestamp_granularities: ["segment"],
