@@ -8,7 +8,7 @@ const REDIRECT_URI = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/instagram/call
 // Scopes for Instagram
 // Note: instagram_content_publish requires Facebook App Review for production
 // In development mode, only works for app admins/testers
-const SCOPES = "instagram_basic,pages_show_list";
+const SCOPES = "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement";
 
 export function getAuthUrl(): string {
   const params = new URLSearchParams({

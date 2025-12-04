@@ -1,4 +1,5 @@
 import { google } from "googleapis";
+import { Readable } from "stream";
 
 const SCOPES = [
   "https://www.googleapis.com/auth/youtube.upload",
@@ -75,11 +76,19 @@ export async function uploadToYouTube(
   const youtube = google.youtube({ version: "v3", auth: oauth2Client });
 
   // Download video from URL
+  console.log("Downloading video for YouTube upload:", videoUrl.substring(0, 80));
   const videoResponse = await fetch(videoUrl);
+  if (!videoResponse.ok) {
+    throw new Error(`Failed to download video: ${videoResponse.status}`);
+  }
   const videoBuffer = await videoResponse.arrayBuffer();
-  const videoStream = Buffer.from(videoBuffer);
+  console.log(`Downloaded ${videoBuffer.byteLength} bytes for YouTube`);
+  
+  // Convert to readable stream (required by YouTube API)
+  const videoStream = Readable.from(Buffer.from(videoBuffer));
 
   // Upload to YouTube
+  console.log("Starting YouTube upload...");
   const response = await youtube.videos.insert({
     part: ["snippet", "status"],
     requestBody: {
@@ -95,11 +104,17 @@ export async function uploadToYouTube(
       },
     },
     media: {
-      body: videoStream as any,
+      body: videoStream,
     },
   });
 
-  const videoId = response.data.id!;
+  const videoId = response.data.id;
+  if (!videoId) {
+    console.error("YouTube upload response:", JSON.stringify(response.data));
+    throw new Error("YouTube upload failed - no video ID returned");
+  }
+  
+  console.log("YouTube upload successful:", videoId);
   return {
     videoId,
     url: `https://youtube.com/shorts/${videoId}`,
