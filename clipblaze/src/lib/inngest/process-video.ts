@@ -256,74 +256,73 @@ export const processVideo = inngest.createFunction(
       return urlData.publicUrl;
     });
 
-    // Step 3: Transcribe with Whisper
+    // Step 3: Transcribe with AssemblyAI (more reliable than Whisper for various formats)
     const transcript = await step.run("transcribe-video", async () => {
       await getSupabase()
         .from("videos")
         .update({ status: "transcribing", updated_at: new Date().toISOString() })
         .eq("id", videoId);
 
-      // Download audio from original YouTube URL
-      console.log("Downloading audio for transcription...");
-      const audioResponse = await fetch(videoInfo.audioUrl);
-      const audioBuffer = await audioResponse.arrayBuffer();
-      
-      console.log(`Audio downloaded: ${audioBuffer.byteLength} bytes`);
-      console.log(`Known mimeType from API: ${videoInfo.audioMimeType}`);
+      const { AssemblyAI } = await import("assemblyai");
+      const assemblyClient = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY! });
 
-      // Determine file extension based on known mimeType from YouTube API
-      const knownMime = videoInfo.audioMimeType || "";
-      let fileName: string;
-      let mimeType: string;
-      
-      if (knownMime.includes("webm")) {
-        fileName = "audio.webm";
-        mimeType = "audio/webm";
-      } else if (knownMime.includes("mp4") || knownMime.includes("m4a")) {
-        fileName = "audio.m4a";
-        mimeType = "audio/mp4";
-      } else if (knownMime.includes("mpeg") || knownMime.includes("mp3")) {
-        fileName = "audio.mp3";
-        mimeType = "audio/mpeg";
-      } else if (knownMime.includes("ogg")) {
-        fileName = "audio.ogg";
-        mimeType = "audio/ogg";
-      } else {
-        // Default to webm as YouTube commonly uses it
-        fileName = "audio.webm";
-        mimeType = "audio/webm";
-      }
+      console.log("Starting AssemblyAI transcription with URL:", publicVideoUrl.substring(0, 80));
 
-      console.log(`Using filename: ${fileName}, mimeType: ${mimeType}`);
-
-      // Use OpenAI's toFile helper for proper file handling in Node.js
-      const { toFile } = await import("openai/uploads");
-      const file = await toFile(Buffer.from(audioBuffer), fileName, { type: mimeType });
-
-      const response = await getOpenAI().audio.transcriptions.create({
-        file: file,
-        model: "whisper-1",
-        response_format: "verbose_json",
-        timestamp_granularities: ["segment"],
+      // AssemblyAI can transcribe directly from URL - no file format issues!
+      const transcriptResult = await assemblyClient.transcripts.transcribe({
+        audio_url: publicVideoUrl,
+        language_code: "en",
       });
 
-      const segments: TranscriptSegment[] = (response.segments || []).map((seg) => ({
-        start: seg.start,
-        end: seg.end,
-        text: seg.text.trim(),
-      }));
+      if (transcriptResult.status === "error") {
+        throw new Error(`Transcription failed: ${transcriptResult.error}`);
+      }
+
+      // Convert AssemblyAI words to segments (group by sentences/pauses)
+      const words = transcriptResult.words || [];
+      const segments: TranscriptSegment[] = [];
+      let currentSegment: { start: number; end: number; text: string } | null = null;
+
+      for (const word of words) {
+        if (!currentSegment) {
+          currentSegment = {
+            start: (word.start || 0) / 1000,
+            end: (word.end || 0) / 1000,
+            text: word.text || "",
+          };
+        } else {
+          const gap = ((word.start || 0) - (currentSegment.end * 1000)) / 1000;
+          // Start new segment if gap > 1 second or segment > 30 seconds
+          if (gap > 1 || (word.end || 0) / 1000 - currentSegment.start > 30) {
+            segments.push(currentSegment);
+            currentSegment = {
+              start: (word.start || 0) / 1000,
+              end: (word.end || 0) / 1000,
+              text: word.text || "",
+            };
+          } else {
+            currentSegment.end = (word.end || 0) / 1000;
+            currentSegment.text += " " + (word.text || "");
+          }
+        }
+      }
+      if (currentSegment) segments.push(currentSegment);
+
+      const fullText = transcriptResult.text || "";
+      const duration = segments.length > 0 ? segments[segments.length - 1].end : 0;
+      console.log(`Transcription complete: ${segments.length} segments, ${fullText.length} chars`);
 
       await getSupabase().from("transcripts").insert({
         video_id: videoId,
-        full_text: response.text,
+        full_text: fullText,
         segments,
         language: "en",
       });
 
       return {
-        fullText: response.text,
+        fullText,
         segments,
-        duration: response.duration || segments[segments.length - 1]?.end || 0,
+        duration,
       };
     });
 
@@ -335,8 +334,9 @@ export const processVideo = inngest.createFunction(
         .update({ status: "analyzing", updated_at: new Date().toISOString() })
         .eq("id", videoId);
 
-      const formattedTranscript = transcript.segments
-        .map((s) => `[${formatTime(s.start)} - ${formatTime(s.end)}] ${s.text}`)
+      const typedTranscript = transcript as { fullText: string; segments: TranscriptSegment[]; duration: number };
+      const formattedTranscript = typedTranscript.segments
+        .map((s: TranscriptSegment) => `[${formatTime(s.start)} - ${formatTime(s.end)}] ${s.text}`)
         .join("\n");
 
       const prompt = `You are a viral content expert. Find the SINGLE BEST clip for TikTok/Reels/Shorts.
@@ -344,7 +344,7 @@ export const processVideo = inngest.createFunction(
 TRANSCRIPT:
 ${formattedTranscript}
 
-VIDEO DURATION: ${formatTime(transcript.duration)}
+VIDEO DURATION: ${formatTime(typedTranscript.duration)}
 
 Return ONLY JSON array with exactly 1 clip:
 [{"title": "Catchy Title", "startTime": 0, "endTime": 30, "viralScore": 85, "reason": "Why viral"}]
@@ -363,7 +363,7 @@ Rules: title max 50 chars, clip 15-60 seconds, pick the most engaging hook/insig
 
       return clips.map((clip: { title: string; startTime: number; endTime: number; viralScore: number; reason: string }) => ({
         ...clip,
-        transcript: getTranscriptForRange(transcript.segments, clip.startTime, clip.endTime),
+        transcript: getTranscriptForRange(typedTranscript.segments, clip.startTime, clip.endTime),
       }));
     });
 
