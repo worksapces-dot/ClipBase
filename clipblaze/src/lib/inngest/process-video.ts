@@ -176,65 +176,82 @@ export const processVideo = inngest.createFunction(
 
       console.log("Fetching video for:", ytVideoId);
       
-      // Use Cobalt API - free and reliable for YouTube downloads
-      const response = await fetch("https://api.cobalt.tools/", {
-        method: "POST",
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: youtubeUrl,
-          downloadMode: "auto",
-          filenameStyle: "basic",
-          videoQuality: "720",
-        }),
-      });
+      // Use your original RapidAPI - ytstream
+      const response = await fetch(
+        `https://ytstream-download-youtube-videos.p.rapidapi.com/dl?id=${ytVideoId}`,
+        {
+          headers: {
+            "X-RapidAPI-Key": process.env.RAPIDAPI_KEY!,
+            "X-RapidAPI-Host": "ytstream-download-youtube-videos.p.rapidapi.com",
+          },
+        }
+      );
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.log("Cobalt API error:", errorText);
-        throw new Error(`Download API error: ${response.status}`);
+        throw new Error(`YouTube API error: ${response.status}`);
       }
 
       const data = await response.json();
-      console.log("Cobalt API response:", JSON.stringify(data).substring(0, 500));
+      console.log("YouTube API - title:", data.title, "formats:", data.formats?.length);
       
-      let downloadUrl: string | null = null;
-      let videoTitle = "YouTube Video";
-      
-      if (data.status === "tunnel" || data.status === "redirect") {
-        downloadUrl = data.url;
-      } else if (data.status === "picker" && data.picker?.length > 0) {
-        // Multiple options - pick the video
-        const videoOption = data.picker.find((p: { type?: string }) => p.type === "video") || data.picker[0];
-        downloadUrl = videoOption?.url;
-      } else if (data.url) {
-        downloadUrl = data.url;
-      }
-      
-      if (!downloadUrl) {
-        console.log("Full response:", JSON.stringify(data));
-        throw new Error(data.text || "No download URL found - video may be restricted");
+      if (!data.formats?.length) {
+        throw new Error("No formats available - video may be private");
       }
 
-      console.log("Got download URL, fetching video...");
+      // Get video title
+      const videoTitle = data.title || "YouTube Video";
       
-      // Download the video from Cobalt's tunnel
-      const videoResponse = await fetch(downloadUrl, {
-        redirect: "follow",
-      });
-
-      if (!videoResponse.ok) {
-        throw new Error(`Failed to download video: ${videoResponse.status}`);
+      // Find a format with BOTH video and audio (important!)
+      const combinedFormat = data.formats.find((f: { mimeType?: string; hasVideo?: boolean; hasAudio?: boolean; qualityLabel?: string }) => 
+        f.hasVideo && f.hasAudio && f.mimeType?.includes("video/mp4")
+      );
+      
+      // If no combined format, get video-only format
+      const videoFormat = combinedFormat || data.formats.find((f: { mimeType?: string; qualityLabel?: string }) => 
+        f.mimeType?.includes("video/mp4") && (f.qualityLabel === "720p" || f.qualityLabel === "480p" || f.qualityLabel === "360p")
+      ) || data.formats.find((f: { mimeType?: string }) => f.mimeType?.includes("video/mp4"));
+      
+      if (!videoFormat?.url) {
+        throw new Error("No suitable video format found");
       }
 
-      const videoBuffer = await videoResponse.arrayBuffer();
+      console.log("Selected:", videoFormat.qualityLabel, "hasAudio:", videoFormat.hasAudio);
+      
+      // For AssemblyAI transcription, we can use the YouTube URL directly!
+      // AssemblyAI can fetch from YouTube URLs
+      // Just store the video URL for Creatomate, and use YouTube URL for transcription
+      
+      // Try to download - if it fails with 403, we'll handle it
+      let videoBuffer: ArrayBuffer;
+      try {
+        const videoResponse = await fetch(videoFormat.url, {
+          headers: { "User-Agent": "Mozilla/5.0" },
+        });
+        
+        if (!videoResponse.ok) {
+          throw new Error(`Download failed: ${videoResponse.status}`);
+        }
+        
+        videoBuffer = await videoResponse.arrayBuffer();
+        
+        if (videoBuffer.byteLength < 10000) {
+          throw new Error("File too small");
+        }
+      } catch (downloadError) {
+        console.log("Direct download failed, using alternative method...");
+        
+        // Use a video download proxy service
+        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(videoFormat.url)}`;
+        const proxyResponse = await fetch(proxyUrl);
+        
+        if (!proxyResponse.ok) {
+          throw new Error(`Video download failed - YouTube may be blocking. Try a different video.`);
+        }
+        
+        videoBuffer = await proxyResponse.arrayBuffer();
+      }
+      
       console.log(`Downloaded ${videoBuffer.byteLength} bytes`);
-
-      if (videoBuffer.byteLength < 10000) {
-        throw new Error(`Video download failed - file too small: ${videoBuffer.byteLength} bytes. URL may have expired.`);
-      }
 
       // Upload to Supabase Storage
       const fileName = `${videoId}/source.mp4`;
