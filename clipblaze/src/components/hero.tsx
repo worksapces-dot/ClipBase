@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { RainbowButton } from "@/components/ui/rainbow-button";
+import { Highlighter } from "@/components/ui/highlighter";
 import { SparklesIcon } from "./icons";
 
 export function Hero() {
@@ -44,7 +45,10 @@ export function Hero() {
         <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold tracking-tight mb-6">
           <span className="gradient-text">Turn long videos</span>
           <br />
-          <span className="text-white">into viral shorts</span>
+          <span className="text-white">into </span>
+          <Highlighter action="highlight" color="rgba(255,255,255,0.15)" strokeWidth={2} isView>
+            <span className="text-white">viral shorts</span>
+          </Highlighter>
         </h1>
 
         <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed">

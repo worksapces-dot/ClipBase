@@ -58,17 +58,39 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
   // Show upgrade success with confetti
   useEffect(() => {
     if (searchParams.get("upgraded") === "true") {
-      // Fire confetti!
-      confettiRef.current?.fire({
-        particleCount: 150,
-        spread: 80,
-        origin: { y: 0.6 },
-      });
+      // Delay confetti to ensure canvas is ready
+      const timer = setTimeout(() => {
+        // Fire multiple bursts for better effect
+        confettiRef.current?.fire({
+          particleCount: 100,
+          spread: 70,
+          origin: { y: 0.6, x: 0.5 },
+        });
+        setTimeout(() => {
+          confettiRef.current?.fire({
+            particleCount: 50,
+            angle: 60,
+            spread: 55,
+            origin: { x: 0 },
+          });
+        }, 200);
+        setTimeout(() => {
+          confettiRef.current?.fire({
+            particleCount: 50,
+            angle: 120,
+            spread: 55,
+            origin: { x: 1 },
+          });
+        }, 400);
+      }, 300);
+
       // Refresh subscription
       fetch("/api/subscription")
         .then((res) => res.json())
         .then((data) => setSubscription(data));
       router.replace("/dashboard");
+
+      return () => clearTimeout(timer);
     }
   }, [searchParams, router]);
 
@@ -137,7 +159,8 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
       {/* Confetti for upgrade celebration */}
       <Confetti
         ref={confettiRef}
-        className="fixed inset-0 pointer-events-none z-50"
+        className="fixed left-0 top-0 w-full h-full pointer-events-none z-50"
+        style={{ width: "100vw", height: "100vh" }}
         manualstart
       />
 

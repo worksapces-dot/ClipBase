@@ -24,8 +24,14 @@ export async function POST(request: NextRequest) {
 
     const successUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/dashboard?upgraded=true`;
 
-    // Create checkout session via Polar API v1
-    const checkoutRes = await fetch(`${POLAR_API_URL}/checkouts`, {
+    // First, save user_id to metadata for webhook
+    await supabase
+      .from("subscriptions")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("user_id", user.id);
+
+    // Create checkout session via Polar API
+    const checkoutRes = await fetch(`${POLAR_API_URL}/checkouts/`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -35,23 +41,25 @@ export async function POST(request: NextRequest) {
         product_price_id: product.priceId,
         success_url: successUrl,
         customer_email: user.email,
-        customer_name: user.user_metadata?.full_name,
-        metadata: {
-          user_id: user.id,
+        customer_name: user.user_metadata?.full_name || user.email?.split("@")[0],
+        customer_metadata: {
+          supabase_user_id: user.id,
         },
       }),
     });
 
+    const responseText = await checkoutRes.text();
+    console.log("Polar checkout response:", checkoutRes.status, responseText);
+
     if (!checkoutRes.ok) {
-      const error = await checkoutRes.text();
-      console.error("Failed to create checkout:", error);
+      console.error("Failed to create checkout:", responseText);
       return NextResponse.json(
-        { error: "Failed to create checkout: " + error },
+        { error: "Failed to create checkout session" },
         { status: 500 }
       );
     }
 
-    const checkout = await checkoutRes.json();
+    const checkout = JSON.parse(responseText);
 
     // Save polar customer ID if returned
     if (checkout.customer_id) {
