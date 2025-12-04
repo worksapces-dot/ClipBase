@@ -17,6 +17,8 @@ export type Database = {
           end_time: number
           highlights: Json | null
           id: string
+          instagram_media_id: string | null
+          instagram_upload_status: string | null
           start_time: number
           status: string | null
           storage_path: string | null
@@ -27,6 +29,8 @@ export type Database = {
           user_id: string
           video_id: string
           viral_score: number | null
+          youtube_upload_status: string | null
+          youtube_video_id: string | null
         }
         Insert: {
           caption_style?: Json | null
@@ -34,6 +38,8 @@ export type Database = {
           end_time: number
           highlights?: Json | null
           id?: string
+          instagram_media_id?: string | null
+          instagram_upload_status?: string | null
           start_time: number
           status?: string | null
           storage_path?: string | null
@@ -44,6 +50,8 @@ export type Database = {
           user_id: string
           video_id: string
           viral_score?: number | null
+          youtube_upload_status?: string | null
+          youtube_video_id?: string | null
         }
         Update: {
           caption_style?: Json | null
@@ -51,6 +59,8 @@ export type Database = {
           end_time?: number
           highlights?: Json | null
           id?: string
+          instagram_media_id?: string | null
+          instagram_upload_status?: string | null
           start_time?: number
           status?: string | null
           storage_path?: string | null
@@ -61,6 +71,8 @@ export type Database = {
           user_id?: string
           video_id?: string
           viral_score?: number | null
+          youtube_upload_status?: string | null
+          youtube_video_id?: string | null
         }
       }
       subscriptions: {
