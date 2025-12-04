@@ -174,74 +174,59 @@ export const processVideo = inngest.createFunction(
       const ytVideoId = videoIdMatch?.[1];
       if (!ytVideoId) throw new Error("Invalid YouTube URL");
 
-      console.log("Fetching video info for:", ytVideoId);
+      console.log("Fetching video for:", ytVideoId);
       
-      // Use ytstream API
-      const response = await fetch(
-        `https://ytstream-download-youtube-videos.p.rapidapi.com/dl?id=${ytVideoId}`,
-        {
-          headers: {
-            "X-RapidAPI-Key": process.env.RAPIDAPI_KEY!,
-            "X-RapidAPI-Host": "ytstream-download-youtube-videos.p.rapidapi.com",
-          },
-        }
-      );
+      // Use Cobalt API - free and reliable for YouTube downloads
+      const response = await fetch("https://api.cobalt.tools/", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url: youtubeUrl,
+          downloadMode: "auto",
+          filenameStyle: "basic",
+          videoQuality: "720",
+        }),
+      });
 
       if (!response.ok) {
-        throw new Error(`YouTube API error: ${response.status} ${response.statusText}`);
+        const errorText = await response.text();
+        console.log("Cobalt API error:", errorText);
+        throw new Error(`Download API error: ${response.status}`);
       }
 
       const data = await response.json();
-      console.log("YouTube API response - title:", data.title, "formats:", data.formats?.length || 0);
+      console.log("Cobalt API response:", JSON.stringify(data).substring(0, 500));
       
-      if (data.status === "fail" || !data.formats?.length) {
-        throw new Error(data.reason || "No download formats available - video may be private or restricted");
+      let downloadUrl: string | null = null;
+      let videoTitle = "YouTube Video";
+      
+      if (data.status === "tunnel" || data.status === "redirect") {
+        downloadUrl = data.url;
+      } else if (data.status === "picker" && data.picker?.length > 0) {
+        // Multiple options - pick the video
+        const videoOption = data.picker.find((p: { type?: string }) => p.type === "video") || data.picker[0];
+        downloadUrl = videoOption?.url;
+      } else if (data.url) {
+        downloadUrl = data.url;
+      }
+      
+      if (!downloadUrl) {
+        console.log("Full response:", JSON.stringify(data));
+        throw new Error(data.text || "No download URL found - video may be restricted");
       }
 
-      // Find best video format - prefer formats with both video and audio
-      const combinedFormats = data.formats.filter((f: { mimeType?: string; hasVideo?: boolean; hasAudio?: boolean }) => 
-        f.mimeType?.includes("video/mp4") && f.hasVideo && f.hasAudio
-      );
+      console.log("Got download URL, fetching video...");
       
-      const videoOnlyFormats = data.formats.filter((f: { mimeType?: string }) => 
-        f.mimeType?.includes("video/mp4")
-      );
-      
-      console.log("Combined formats:", combinedFormats.length, "Video-only:", videoOnlyFormats.length);
-      
-      // Prefer combined format, then video-only
-      let videoFormat = combinedFormats.find((f: { qualityLabel?: string }) => 
-        f.qualityLabel === "720p" || f.qualityLabel === "480p"
-      ) || combinedFormats.find((f: { qualityLabel?: string }) => 
-        f.qualityLabel === "360p"
-      ) || combinedFormats[0];
-      
-      if (!videoFormat) {
-        videoFormat = videoOnlyFormats.find((f: { qualityLabel?: string }) => 
-          f.qualityLabel === "720p" || f.qualityLabel === "480p" || f.qualityLabel === "360p"
-        ) || videoOnlyFormats[0];
-      }
-
-      if (!videoFormat?.url) {
-        console.log("All formats:", JSON.stringify(data.formats.slice(0, 3)));
-        throw new Error("No suitable video format found");
-      }
-
-      console.log("Selected format:", videoFormat.qualityLabel, "hasAudio:", videoFormat.hasAudio);
-      console.log("Downloading video immediately (URLs expire quickly)...");
-
-      // Download video immediately - YouTube URLs expire fast!
-      const videoResponse = await fetch(videoFormat.url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "*/*",
-          "Accept-Encoding": "identity",
-          "Range": "bytes=0-",
-        },
+      // Download the video from Cobalt's tunnel
+      const videoResponse = await fetch(downloadUrl, {
+        redirect: "follow",
       });
 
       if (!videoResponse.ok) {
-        throw new Error(`Failed to download video: ${videoResponse.status} ${videoResponse.statusText}`);
+        throw new Error(`Failed to download video: ${videoResponse.status}`);
       }
 
       const videoBuffer = await videoResponse.arrayBuffer();
@@ -274,8 +259,8 @@ export const processVideo = inngest.createFunction(
       await getSupabase()
         .from("videos")
         .update({ 
-          title: data.title || "Untitled", 
-          duration_seconds: data.lengthSeconds ? parseInt(data.lengthSeconds) : null 
+          title: videoTitle, 
+          duration_seconds: null // Duration not always available from this API
         })
         .eq("id", videoId);
 
@@ -283,8 +268,8 @@ export const processVideo = inngest.createFunction(
       
       return {
         publicVideoUrl: urlData.publicUrl,
-        videoTitle: data.title || "Untitled",
-        videoDuration: data.lengthSeconds ? parseInt(data.lengthSeconds) : null,
+        videoTitle: videoTitle,
+        videoDuration: null,
       };
     });
 
