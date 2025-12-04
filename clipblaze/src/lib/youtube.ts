@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { Readable } from "stream";
+import { Readable, PassThrough } from "stream";
 
 const SCOPES = [
   "https://www.googleapis.com/auth/youtube.upload",
@@ -17,7 +17,7 @@ function getOAuth2Client(redirectUri?: string) {
 export function getAuthUrl() {
   const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/youtube/callback`;
   const oauth2Client = getOAuth2Client(redirectUri);
-  
+
   return oauth2Client.generateAuthUrl({
     access_type: "offline",
     scope: SCOPES,
@@ -76,47 +76,82 @@ export async function uploadToYouTube(
   const youtube = google.youtube({ version: "v3", auth: oauth2Client });
 
   // Download video from URL
-  console.log("Downloading video for YouTube upload:", videoUrl.substring(0, 80));
+  console.log("Downloading video for YouTube upload:", videoUrl);
   const videoResponse = await fetch(videoUrl);
   if (!videoResponse.ok) {
-    throw new Error(`Failed to download video: ${videoResponse.status}`);
+    throw new Error(
+      `Failed to download video: ${videoResponse.status} ${videoResponse.statusText}`
+    );
   }
-  const videoBuffer = await videoResponse.arrayBuffer();
+
+  const videoBuffer = Buffer.from(await videoResponse.arrayBuffer());
   console.log(`Downloaded ${videoBuffer.byteLength} bytes for YouTube`);
-  
-  // Convert to readable stream (required by YouTube API)
-  const videoStream = Readable.from(Buffer.from(videoBuffer));
 
-  // Upload to YouTube
-  console.log("Starting YouTube upload...");
-  const response = await youtube.videos.insert({
-    part: ["snippet", "status"],
-    requestBody: {
-      snippet: {
-        title: title.substring(0, 100),
-        description: `${description}\n\n#Shorts`,
-        tags: ["shorts", "viral", "clipblaze"],
-        categoryId: "22", // People & Blogs
-      },
-      status: {
-        privacyStatus: "public",
-        selfDeclaredMadeForKids: false,
-      },
-    },
-    media: {
-      body: videoStream,
-    },
-  });
-
-  const videoId = response.data.id;
-  if (!videoId) {
-    console.error("YouTube upload response:", JSON.stringify(response.data));
-    throw new Error("YouTube upload failed - no video ID returned");
+  if (videoBuffer.byteLength < 1000) {
+    throw new Error(
+      `Video file too small (${videoBuffer.byteLength} bytes) - download may have failed`
+    );
   }
-  
-  console.log("YouTube upload successful:", videoId);
-  return {
-    videoId,
-    url: `https://youtube.com/shorts/${videoId}`,
-  };
+
+  // Create a PassThrough stream from buffer
+  const bufferStream = new PassThrough();
+  bufferStream.end(videoBuffer);
+
+  // Upload to YouTube as a Short
+  console.log("Starting YouTube Shorts upload...");
+  try {
+    const response = await youtube.videos.insert({
+      part: ["snippet", "status"],
+      notifySubscribers: false,
+      requestBody: {
+        snippet: {
+          title: title.substring(0, 100),
+          description: `${description}\n\n#Shorts #viral`,
+          tags: ["Shorts", "viral", "clipblaze"],
+          categoryId: "22", // People & Blogs
+        },
+        status: {
+          privacyStatus: "public",
+          selfDeclaredMadeForKids: false,
+        },
+      },
+      media: {
+        mimeType: "video/mp4",
+        body: bufferStream,
+      },
+    });
+
+    const videoId = response.data.id;
+    if (!videoId) {
+      console.error("YouTube API response:", JSON.stringify(response.data));
+      throw new Error("YouTube upload failed - no video ID in response");
+    }
+
+    console.log("YouTube upload successful! Video ID:", videoId);
+    return {
+      videoId,
+      url: `https://youtube.com/shorts/${videoId}`,
+    };
+  } catch (error: unknown) {
+    // Extract detailed error from Google API
+    const apiError = error as {
+      response?: {
+        data?: {
+          error?: {
+            message?: string;
+            errors?: Array<{ reason?: string; message?: string }>;
+          };
+        };
+      };
+      message?: string;
+    };
+    if (apiError.response?.data?.error) {
+      const errData = apiError.response.data.error;
+      console.error("YouTube API Error:", errData.message);
+      console.error("Error details:", JSON.stringify(errData.errors));
+      throw new Error(`YouTube API: ${errData.message}`);
+    }
+    console.error("YouTube upload error:", apiError.message || error);
+    throw error;
+  }
 }

@@ -449,7 +449,7 @@ Rules: title max 50 chars, clip 15-60 seconds, pick the most engaging hook/insig
     // Step 6: Auto-upload to YouTube if enabled
     await step.run("youtube-upload", async () => {
       // Check if user has YouTube connected with auto-upload enabled
-      const { data: ytConnection } = await getSupabase()
+      const { data: ytConnection, error: ytError } = await getSupabase()
         .from("youtube_connections")
         .select("*")
         .eq("user_id", userId)
@@ -457,8 +457,8 @@ Rules: title max 50 chars, clip 15-60 seconds, pick the most engaging hook/insig
         .single();
 
       if (!ytConnection) {
-        console.log("YouTube auto-upload not enabled for user");
-        return;
+        console.log("YouTube auto-upload not enabled for user:", ytError?.message || "no connection");
+        return { skipped: true, reason: "no_connection" };
       }
 
       // Get clips that were just created
@@ -468,13 +468,21 @@ Rules: title max 50 chars, clip 15-60 seconds, pick the most engaging hook/insig
         .eq("video_id", videoId)
         .eq("status", "completed");
 
-      if (!clips?.length) return;
+      if (!clips?.length) {
+        console.log("No completed clips to upload");
+        return { skipped: true, reason: "no_clips" };
+      }
 
+      const results = [];
       for (const clip of clips) {
-        if (!clip.storage_path) continue;
+        if (!clip.storage_path) {
+          console.log(`Clip ${clip.id} has no storage_path, skipping`);
+          continue;
+        }
 
         try {
           console.log(`Uploading clip to YouTube: ${clip.title}`);
+          console.log(`Clip storage_path: ${clip.storage_path}`);
           
           // Update status to uploading
           await getSupabase()
@@ -485,11 +493,13 @@ Rules: title max 50 chars, clip 15-60 seconds, pick the most engaging hook/insig
           // Upload to YouTube
           const { uploadToYouTube, refreshAccessToken } = await import("../youtube");
           
-          // Refresh token if needed
+          // Always refresh token before upload (tokens expire in 1 hour)
+          console.log("Refreshing YouTube access token...");
           let accessToken = ytConnection.access_token;
-          if (ytConnection.token_expires_at && new Date(ytConnection.token_expires_at) < new Date()) {
+          try {
             const newTokens = await refreshAccessToken(ytConnection.refresh_token);
             accessToken = newTokens.access_token!;
+            console.log("Token refreshed successfully");
             
             // Update tokens in database
             await getSupabase()
@@ -499,6 +509,8 @@ Rules: title max 50 chars, clip 15-60 seconds, pick the most engaging hook/insig
                 token_expires_at: newTokens.expiry_date ? new Date(newTokens.expiry_date).toISOString() : null,
               })
               .eq("id", ytConnection.id);
+          } catch (refreshError) {
+            console.error("Token refresh failed, using existing token:", refreshError);
           }
 
           const result = await uploadToYouTube(
@@ -519,14 +531,19 @@ Rules: title max 50 chars, clip 15-60 seconds, pick the most engaging hook/insig
             .eq("id", clip.id);
 
           console.log(`Clip uploaded to YouTube: ${result.url}`);
-        } catch (error) {
-          console.error(`Failed to upload clip to YouTube:`, error);
+          results.push({ clipId: clip.id, success: true, videoId: result.videoId });
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.error(`Failed to upload clip to YouTube:`, errorMessage);
+          console.error("Full error:", error);
           await getSupabase()
             .from("clips")
             .update({ youtube_upload_status: "failed" })
             .eq("id", clip.id);
+          results.push({ clipId: clip.id, success: false, error: errorMessage });
         }
       }
+      return { uploaded: results.filter(r => r.success).length, results };
     });
 
     // Step 7: Auto-upload to Instagram if enabled
