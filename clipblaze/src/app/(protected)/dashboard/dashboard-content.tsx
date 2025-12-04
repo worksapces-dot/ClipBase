@@ -10,6 +10,7 @@ import { Video, Clip } from "@/lib/database.types";
 import { Button } from "@/components/ui/button";
 import { Confetti, ConfettiRef } from "@/components/ui/confetti";
 import { YouTubeConnection } from "@/components/youtube-connection";
+import { InstagramConnection } from "@/components/instagram-connection";
 
 type VideoWithClips = Video & { clips: Clip[] };
 
@@ -207,9 +208,10 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
         )}
       </div>
 
-      {/* YouTube Connection */}
-      <div className="mb-8">
+      {/* Social Connections */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
         <YouTubeConnection />
+        <InstagramConnection />
       </div>
 
       {/* Usage Limit Warning */}

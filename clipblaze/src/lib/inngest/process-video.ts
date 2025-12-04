@@ -185,18 +185,31 @@ export const processVideo = inngest.createFunction(
       );
 
       const data = await response.json();
+      console.log("YouTube API response formats:", data.formats?.length || 0);
       if (!data.formats?.length) throw new Error("No download formats available");
 
-      const audioFormat = data.formats.find((f: { mimeType?: string }) => f.mimeType?.includes("audio/"));
+      // Prefer audio formats that Whisper supports: mp4/m4a, webm, mp3
+      const audioFormat = data.formats.find((f: { mimeType?: string }) => 
+        f.mimeType?.includes("audio/mp4") || f.mimeType?.includes("audio/m4a")
+      ) || data.formats.find((f: { mimeType?: string }) => 
+        f.mimeType?.includes("audio/webm")
+      ) || data.formats.find((f: { mimeType?: string }) => 
+        f.mimeType?.includes("audio/")
+      );
+      
       const videoFormat = data.formats.find(
         (f: { mimeType?: string; qualityLabel?: string }) =>
           f.mimeType?.includes("video/mp4") && (f.qualityLabel === "720p" || f.qualityLabel === "480p")
       ) || data.formats.find((f: { mimeType?: string }) => f.mimeType?.includes("video/mp4"));
 
+      console.log("Selected audio format:", audioFormat?.mimeType);
+      console.log("Selected video format:", videoFormat?.mimeType);
+
       return {
         title: data.title || "Untitled",
         duration: data.lengthSeconds ? parseInt(data.lengthSeconds) : null,
         audioUrl: audioFormat?.url || videoFormat?.url,
+        audioMimeType: audioFormat?.mimeType || videoFormat?.mimeType || "video/mp4",
         videoUrl: videoFormat?.url,
       };
     });
@@ -250,15 +263,42 @@ export const processVideo = inngest.createFunction(
         .update({ status: "transcribing", updated_at: new Date().toISOString() })
         .eq("id", videoId);
 
-      // Use the uploaded MP4 video file for transcription
-      const videoResponse = await fetch(publicVideoUrl);
-      const videoBuffer = await videoResponse.arrayBuffer();
+      // Download audio from original YouTube URL
+      console.log("Downloading audio for transcription...");
+      const audioResponse = await fetch(videoInfo.audioUrl);
+      const audioBuffer = await audioResponse.arrayBuffer();
       
-      console.log(`Transcribing video: ${videoBuffer.byteLength} bytes`);
+      console.log(`Audio downloaded: ${audioBuffer.byteLength} bytes`);
+      console.log(`Known mimeType from API: ${videoInfo.audioMimeType}`);
+
+      // Determine file extension based on known mimeType from YouTube API
+      const knownMime = videoInfo.audioMimeType || "";
+      let fileName: string;
+      let mimeType: string;
+      
+      if (knownMime.includes("webm")) {
+        fileName = "audio.webm";
+        mimeType = "audio/webm";
+      } else if (knownMime.includes("mp4") || knownMime.includes("m4a")) {
+        fileName = "audio.m4a";
+        mimeType = "audio/mp4";
+      } else if (knownMime.includes("mpeg") || knownMime.includes("mp3")) {
+        fileName = "audio.mp3";
+        mimeType = "audio/mpeg";
+      } else if (knownMime.includes("ogg")) {
+        fileName = "audio.ogg";
+        mimeType = "audio/ogg";
+      } else {
+        // Default to webm as YouTube commonly uses it
+        fileName = "audio.webm";
+        mimeType = "audio/webm";
+      }
+
+      console.log(`Using filename: ${fileName}, mimeType: ${mimeType}`);
 
       // Use OpenAI's toFile helper for proper file handling in Node.js
       const { toFile } = await import("openai/uploads");
-      const file = await toFile(Buffer.from(videoBuffer), "video.mp4", { type: "video/mp4" });
+      const file = await toFile(Buffer.from(audioBuffer), fileName, { type: mimeType });
 
       const response = await getOpenAI().audio.transcriptions.create({
         file: file,
@@ -470,7 +510,89 @@ Rules: title max 50 chars, clip 15-60 seconds, pick the most engaging hook/insig
       }
     });
 
-    // Step 7: Complete
+    // Step 7: Auto-upload to Instagram if enabled
+    await step.run("instagram-upload", async () => {
+      // Check if user has Instagram connected with auto-upload enabled
+      const { data: igConnection } = await getSupabase()
+        .from("instagram_connections")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("auto_upload_enabled", true)
+        .single();
+
+      if (!igConnection) {
+        console.log("Instagram auto-upload not enabled for user");
+        return;
+      }
+
+      // Get clips that were just created
+      const { data: clips } = await getSupabase()
+        .from("clips")
+        .select("*")
+        .eq("video_id", videoId)
+        .eq("status", "completed");
+
+      if (!clips?.length) return;
+
+      for (const clip of clips) {
+        if (!clip.storage_path) continue;
+
+        try {
+          console.log(`Uploading clip to Instagram: ${clip.title}`);
+          
+          // Update status to uploading
+          await getSupabase()
+            .from("clips")
+            .update({ instagram_upload_status: "uploading" })
+            .eq("id", clip.id);
+
+          // Upload to Instagram
+          const { uploadToInstagram, refreshAccessToken } = await import("../instagram");
+          
+          // Refresh token if needed (Instagram tokens last 60 days)
+          let accessToken = igConnection.access_token;
+          if (igConnection.token_expires_at && new Date(igConnection.token_expires_at) < new Date()) {
+            const newTokens = await refreshAccessToken(igConnection.access_token);
+            accessToken = newTokens.accessToken;
+            
+            // Update tokens in database
+            await getSupabase()
+              .from("instagram_connections")
+              .update({
+                access_token: accessToken,
+                token_expires_at: new Date(Date.now() + newTokens.expiresIn * 1000).toISOString(),
+              })
+              .eq("id", igConnection.id);
+          }
+
+          const result = await uploadToInstagram(
+            igConnection.ig_account_id,
+            accessToken,
+            clip.storage_path,
+            clip.title || "Viral Clip"
+          );
+
+          // Update clip with Instagram media ID
+          await getSupabase()
+            .from("clips")
+            .update({
+              instagram_media_id: result.mediaId,
+              instagram_upload_status: "uploaded",
+            })
+            .eq("id", clip.id);
+
+          console.log(`Clip uploaded to Instagram: ${result.permalink}`);
+        } catch (error) {
+          console.error(`Failed to upload clip to Instagram:`, error);
+          await getSupabase()
+            .from("clips")
+            .update({ instagram_upload_status: "failed" })
+            .eq("id", clip.id);
+        }
+      }
+    });
+
+    // Step 8: Complete
     await step.run("complete", async () => {
       await getSupabase()
         .from("videos")
