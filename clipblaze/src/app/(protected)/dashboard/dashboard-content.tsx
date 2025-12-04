@@ -1,13 +1,23 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { VideoInput } from "@/components/video-input";
 import { ProcessingStatus } from "@/components/processing-status";
 import { ClipCard } from "@/components/clip-card";
 import { Video, Clip } from "@/lib/database.types";
+import { Button } from "@/components/ui/button";
+import { Confetti, ConfettiRef } from "@/components/ui/confetti";
 
 type VideoWithClips = Video & { clips: Clip[] };
+
+interface Subscription {
+  plan: string;
+  clipsUsed: number;
+  clipsLimit: number;
+  canGenerate: boolean;
+}
 
 interface DashboardContentProps {
   displayName: string;
@@ -20,17 +30,44 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
   const [videos, setVideos] = useState<VideoWithClips[]>(initialVideos);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const confettiRef = useRef<ConfettiRef>(null);
 
   // Find any video that's currently processing
   const processingVideo = videos.find(v => 
     v.status !== "completed" && v.status !== "failed"
   );
 
+  // Fetch subscription info
+  useEffect(() => {
+    fetch("/api/subscription")
+      .then((res) => res.json())
+      .then((data) => setSubscription(data))
+      .catch(console.error);
+  }, []);
+
   // Handle URL from hero redirect
   useEffect(() => {
     const urlParam = searchParams.get("url");
     if (urlParam) {
       handleSubmit(urlParam);
+      router.replace("/dashboard");
+    }
+  }, [searchParams, router]);
+
+  // Show upgrade success with confetti
+  useEffect(() => {
+    if (searchParams.get("upgraded") === "true") {
+      // Fire confetti!
+      confettiRef.current?.fire({
+        particleCount: 150,
+        spread: 80,
+        origin: { y: 0.6 },
+      });
+      // Refresh subscription
+      fetch("/api/subscription")
+        .then((res) => res.json())
+        .then((data) => setSubscription(data));
       router.replace("/dashboard");
     }
   }, [searchParams, router]);
@@ -89,21 +126,89 @@ export function DashboardContent({ displayName, initialVideos }: DashboardConten
   const completedVideos = videos.filter(v => v.status === "completed");
   const allClips = completedVideos.flatMap(v => v.clips || []);
 
+  const usagePercent = subscription
+    ? subscription.clipsLimit === -1
+      ? 0
+      : (subscription.clipsUsed / subscription.clipsLimit) * 100
+    : 0;
+
   return (
     <main className="max-w-7xl mx-auto px-6 py-12">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">
-          Welcome back, {displayName}!
-        </h1>
-        <p className="text-muted-foreground">
-          Paste a YouTube link to generate viral clips automatically.
-        </p>
+      {/* Confetti for upgrade celebration */}
+      <Confetti
+        ref={confettiRef}
+        className="fixed inset-0 pointer-events-none z-50"
+        manualstart
+      />
+
+      {/* Header with Usage */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+        <div>
+          <h1 className="text-3xl font-bold mb-2">
+            Welcome back, {displayName}!
+          </h1>
+          <p className="text-muted-foreground">
+            Paste a YouTube link to generate viral clips automatically.
+          </p>
+        </div>
+
+        {/* Usage Card */}
+        {subscription && (
+          <div className="glass-card p-4 min-w-[200px]">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-muted-foreground">
+                {subscription.plan.charAt(0).toUpperCase() + subscription.plan.slice(1)} Plan
+              </span>
+              <Link href="/pricing">
+                <Button variant="ghost" size="sm" className="text-xs h-6 px-2">
+                  {subscription.plan === "free" ? "Upgrade" : "Manage"}
+                </Button>
+              </Link>
+            </div>
+            <div className="flex items-baseline gap-1 mb-2">
+              <span className="text-2xl font-bold">{subscription.clipsUsed}</span>
+              <span className="text-muted-foreground">
+                / {subscription.clipsLimit === -1 ? "∞" : subscription.clipsLimit} clips
+              </span>
+            </div>
+            {subscription.clipsLimit !== -1 && (
+              <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-white rounded-full transition-all"
+                  style={{ width: `${Math.min(usagePercent, 100)}%` }}
+                />
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Usage Limit Warning */}
+      {subscription && !subscription.canGenerate && (
+        <div className="glass-card p-4 mb-8 border border-yellow-500/30 bg-yellow-500/5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium text-yellow-400">You've reached your clip limit</p>
+              <p className="text-sm text-muted-foreground">
+                Upgrade your plan to generate more clips this month.
+              </p>
+            </div>
+            <Link href="/pricing">
+              <Button className="bg-white text-black hover:bg-white/90">
+                Upgrade Now
+              </Button>
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Video Input */}
       <div className="mb-8">
-        <VideoInput onSubmit={handleSubmit} isLoading={isSubmitting || !!processingVideo} />
+        <VideoInput 
+          onSubmit={handleSubmit} 
+          isLoading={isSubmitting || !!processingVideo}
+          disabled={subscription ? !subscription.canGenerate : false}
+        />
         {error && (
           <p className="text-red-400 text-sm mt-2">{error}</p>
         )}

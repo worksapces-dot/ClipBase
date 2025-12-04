@@ -1,6 +1,7 @@
 import { inngest } from "../inngest";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
+import { PLAN_LIMITS, PlanType } from "../polar";
 
 // Lazy-load clients to avoid build-time errors
 let supabase: SupabaseClient;
@@ -116,6 +117,49 @@ export const processVideo = inngest.createFunction(
   { event: "video/process" },
   async ({ event, step }) => {
     const { videoId, youtubeUrl, userId } = event.data;
+
+    // Step 0: Check usage limits
+    const usageCheck = await step.run("check-usage-limit", async () => {
+      const { data: subscription } = await getSupabase()
+        .from("subscriptions")
+        .select("*")
+        .eq("user_id", userId)
+        .single();
+
+      if (!subscription) {
+        // Create default free subscription
+        await getSupabase().from("subscriptions").insert({
+          user_id: userId,
+          plan: "free",
+          clips_limit: PLAN_LIMITS.free,
+          clips_used: 0,
+        });
+        return { canGenerate: true, plan: "free", used: 0, limit: PLAN_LIMITS.free };
+      }
+
+      const plan = subscription.plan as PlanType;
+      const limit = subscription.clips_limit;
+      const used = subscription.clips_used;
+
+      // Unlimited plan
+      if (limit === -1) {
+        return { canGenerate: true, plan, used, limit: -1 };
+      }
+
+      return { canGenerate: used < limit, plan, used, limit };
+    });
+
+    if (!usageCheck.canGenerate) {
+      await getSupabase()
+        .from("videos")
+        .update({
+          status: "failed",
+          error_message: `Usage limit reached (${usageCheck.used}/${usageCheck.limit} clips). Please upgrade your plan.`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", videoId);
+      return { success: false, error: "Usage limit reached" };
+    }
 
     // Step 1: Get video info and download URL
     const videoInfo = await step.run("get-video-info", async () => {
@@ -330,6 +374,9 @@ Rules: title max 50 chars, clip 15-60 seconds, pick the most engaging hook/insig
           console.error(`Failed to save clip ${i + 1}:`, insertError);
         } else {
           console.log(`Clip ${i + 1} saved: ${clip.title}`);
+          
+          // Increment usage counter
+          await getSupabase().rpc("increment_clips_used", { p_user_id: userId });
         }
       }
     });

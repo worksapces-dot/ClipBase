@@ -63,6 +63,82 @@ export type Database = {
           viral_score?: number | null
         }
       }
+      subscriptions: {
+        Row: {
+          clips_limit: number | null
+          clips_used: number | null
+          created_at: string | null
+          current_period_end: string | null
+          current_period_start: string | null
+          id: string
+          plan: string
+          polar_customer_id: string | null
+          polar_subscription_id: string | null
+          status: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          clips_limit?: number | null
+          clips_used?: number | null
+          created_at?: string | null
+          current_period_end?: string | null
+          current_period_start?: string | null
+          id?: string
+          plan?: string
+          polar_customer_id?: string | null
+          polar_subscription_id?: string | null
+          status?: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          clips_limit?: number | null
+          clips_used?: number | null
+          created_at?: string | null
+          current_period_end?: string | null
+          current_period_start?: string | null
+          id?: string
+          plan?: string
+          polar_customer_id?: string | null
+          polar_subscription_id?: string | null
+          status?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+      }
+      usage_events: {
+        Row: {
+          clip_id: string | null
+          created_at: string | null
+          event_type: string
+          id: string
+          metadata: Json | null
+          subscription_id: string | null
+          user_id: string
+          video_id: string | null
+        }
+        Insert: {
+          clip_id?: string | null
+          created_at?: string | null
+          event_type: string
+          id?: string
+          metadata?: Json | null
+          subscription_id?: string | null
+          user_id: string
+          video_id?: string | null
+        }
+        Update: {
+          clip_id?: string | null
+          created_at?: string | null
+          event_type?: string
+          id?: string
+          metadata?: Json | null
+          subscription_id?: string | null
+          user_id?: string
+          video_id?: string | null
+        }
+      }
       transcripts: {
         Row: {
           created_at: string | null
@@ -134,12 +210,17 @@ export type Database = {
         }
       }
     }
+    Functions: {
+      increment_clips_used: { Args: { p_user_id: string }; Returns: undefined }
+    }
   }
 }
 
 export type Video = Database['public']['Tables']['videos']['Row']
 export type Clip = Database['public']['Tables']['clips']['Row']
 export type Transcript = Database['public']['Tables']['transcripts']['Row']
+export type Subscription = Database['public']['Tables']['subscriptions']['Row']
+export type UsageEvent = Database['public']['Tables']['usage_events']['Row']
 
 export type TranscriptSegment = {
   start: number

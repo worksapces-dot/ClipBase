@@ -7,9 +7,10 @@ import { SparklesIcon } from "./icons";
 interface VideoInputProps {
   onSubmit: (url: string) => void;
   isLoading?: boolean;
+  disabled?: boolean;
 }
 
-export function VideoInput({ onSubmit, isLoading }: VideoInputProps) {
+export function VideoInput({ onSubmit, isLoading, disabled }: VideoInputProps) {
   const [url, setUrl] = useState("");
 
   const handleSubmit = () => {
@@ -34,14 +35,14 @@ export function VideoInput({ onSubmit, isLoading }: VideoInputProps) {
             onKeyDown={(e) => e.key === 'Enter' && isValidUrl && handleSubmit()}
             placeholder="Paste YouTube link..."
             className="flex-1 bg-transparent text-white placeholder:text-muted-foreground outline-none text-base"
-            disabled={isLoading}
+            disabled={isLoading || disabled}
           />
         </div>
         <Button 
           size="lg" 
           className="bg-white text-black hover:bg-white/90 text-base px-6 h-12 gap-2 shrink-0 disabled:opacity-50"
           onClick={handleSubmit}
-          disabled={!isValidUrl || isLoading}
+          disabled={!isValidUrl || isLoading || disabled}
         >
           {isLoading ? (
             <>
