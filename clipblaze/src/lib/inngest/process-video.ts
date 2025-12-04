@@ -161,8 +161,8 @@ export const processVideo = inngest.createFunction(
       return { success: false, error: "Usage limit reached" };
     }
 
-    // Step 1: Get video info and download URL
-    const videoInfo = await step.run("get-video-info", async () => {
+    // Step 1: Get video info, download, and upload to storage (all in one step to avoid URL expiration)
+    const { publicVideoUrl, videoTitle, videoDuration } = await step.run("download-and-upload-video", async () => {
       await getSupabase()
         .from("videos")
         .update({ status: "downloading", updated_at: new Date().toISOString() })
@@ -174,6 +174,9 @@ export const processVideo = inngest.createFunction(
       const ytVideoId = videoIdMatch?.[1];
       if (!ytVideoId) throw new Error("Invalid YouTube URL");
 
+      console.log("Fetching video info for:", ytVideoId);
+      
+      // Use ytstream API
       const response = await fetch(
         `https://ytstream-download-youtube-videos.p.rapidapi.com/dl?id=${ytVideoId}`,
         {
@@ -184,58 +187,74 @@ export const processVideo = inngest.createFunction(
         }
       );
 
-      const data = await response.json();
-      console.log("YouTube API response formats:", data.formats?.length || 0);
-      if (!data.formats?.length) throw new Error("No download formats available");
+      if (!response.ok) {
+        throw new Error(`YouTube API error: ${response.status} ${response.statusText}`);
+      }
 
-      // Prefer audio formats that Whisper supports: mp4/m4a, webm, mp3
-      const audioFormat = data.formats.find((f: { mimeType?: string }) => 
-        f.mimeType?.includes("audio/mp4") || f.mimeType?.includes("audio/m4a")
-      ) || data.formats.find((f: { mimeType?: string }) => 
-        f.mimeType?.includes("audio/webm")
-      ) || data.formats.find((f: { mimeType?: string }) => 
-        f.mimeType?.includes("audio/")
+      const data = await response.json();
+      console.log("YouTube API response - title:", data.title, "formats:", data.formats?.length || 0);
+      
+      if (data.status === "fail" || !data.formats?.length) {
+        throw new Error(data.reason || "No download formats available - video may be private or restricted");
+      }
+
+      // Find best video format - prefer formats with both video and audio
+      const combinedFormats = data.formats.filter((f: { mimeType?: string; hasVideo?: boolean; hasAudio?: boolean }) => 
+        f.mimeType?.includes("video/mp4") && f.hasVideo && f.hasAudio
       );
       
-      const videoFormat = data.formats.find(
-        (f: { mimeType?: string; qualityLabel?: string }) =>
-          f.mimeType?.includes("video/mp4") && (f.qualityLabel === "720p" || f.qualityLabel === "480p")
-      ) || data.formats.find((f: { mimeType?: string }) => f.mimeType?.includes("video/mp4"));
+      const videoOnlyFormats = data.formats.filter((f: { mimeType?: string }) => 
+        f.mimeType?.includes("video/mp4")
+      );
+      
+      console.log("Combined formats:", combinedFormats.length, "Video-only:", videoOnlyFormats.length);
+      
+      // Prefer combined format, then video-only
+      let videoFormat = combinedFormats.find((f: { qualityLabel?: string }) => 
+        f.qualityLabel === "720p" || f.qualityLabel === "480p"
+      ) || combinedFormats.find((f: { qualityLabel?: string }) => 
+        f.qualityLabel === "360p"
+      ) || combinedFormats[0];
+      
+      if (!videoFormat) {
+        videoFormat = videoOnlyFormats.find((f: { qualityLabel?: string }) => 
+          f.qualityLabel === "720p" || f.qualityLabel === "480p" || f.qualityLabel === "360p"
+        ) || videoOnlyFormats[0];
+      }
 
-      console.log("Selected audio format:", audioFormat?.mimeType);
-      console.log("Selected video format:", videoFormat?.mimeType);
+      if (!videoFormat?.url) {
+        console.log("All formats:", JSON.stringify(data.formats.slice(0, 3)));
+        throw new Error("No suitable video format found");
+      }
 
-      return {
-        title: data.title || "Untitled",
-        duration: data.lengthSeconds ? parseInt(data.lengthSeconds) : null,
-        audioUrl: audioFormat?.url || videoFormat?.url,
-        audioMimeType: audioFormat?.mimeType || videoFormat?.mimeType || "video/mp4",
-        videoUrl: videoFormat?.url,
-      };
-    });
+      console.log("Selected format:", videoFormat.qualityLabel, "hasAudio:", videoFormat.hasAudio);
+      console.log("Downloading video immediately (URLs expire quickly)...");
 
-    if (!videoInfo.audioUrl || !videoInfo.videoUrl) {
-      await getSupabase()
-        .from("videos")
-        .update({ status: "failed", error_message: "Could not get download URL" })
-        .eq("id", videoId);
-      return { success: false, error: "Download failed" };
-    }
+      // Download video immediately - YouTube URLs expire fast!
+      const videoResponse = await fetch(videoFormat.url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "*/*",
+          "Accept-Encoding": "identity",
+          "Range": "bytes=0-",
+        },
+      });
 
-    await getSupabase()
-      .from("videos")
-      .update({ title: videoInfo.title, duration_seconds: videoInfo.duration })
-      .eq("id", videoId);
+      if (!videoResponse.ok) {
+        throw new Error(`Failed to download video: ${videoResponse.status} ${videoResponse.statusText}`);
+      }
 
-    // Step 2: Upload video to Supabase Storage (so Creatomate can access it)
-    const publicVideoUrl = await step.run("upload-video", async () => {
-      console.log("Downloading video to upload to storage...");
-      const videoResponse = await fetch(videoInfo.videoUrl);
       const videoBuffer = await videoResponse.arrayBuffer();
-      
+      console.log(`Downloaded ${videoBuffer.byteLength} bytes`);
+
+      if (videoBuffer.byteLength < 10000) {
+        throw new Error(`Video download failed - file too small: ${videoBuffer.byteLength} bytes. URL may have expired.`);
+      }
+
+      // Upload to Supabase Storage
       const fileName = `${videoId}/source.mp4`;
-      console.log(`Uploading ${videoBuffer.byteLength} bytes to storage...`);
-      
+      console.log(`Uploading to storage...`);
+
       const { error: uploadError } = await getSupabase().storage
         .from("videos")
         .upload(fileName, videoBuffer, {
@@ -244,7 +263,6 @@ export const processVideo = inngest.createFunction(
         });
 
       if (uploadError) {
-        console.error("Upload error:", uploadError);
         throw new Error(`Failed to upload video: ${uploadError.message}`);
       }
 
@@ -252,8 +270,22 @@ export const processVideo = inngest.createFunction(
         .from("videos")
         .getPublicUrl(fileName);
 
-      console.log("Video uploaded, public URL:", urlData.publicUrl);
-      return urlData.publicUrl;
+      // Update video record with title
+      await getSupabase()
+        .from("videos")
+        .update({ 
+          title: data.title || "Untitled", 
+          duration_seconds: data.lengthSeconds ? parseInt(data.lengthSeconds) : null 
+        })
+        .eq("id", videoId);
+
+      console.log("Video uploaded successfully:", urlData.publicUrl);
+      
+      return {
+        publicVideoUrl: urlData.publicUrl,
+        videoTitle: data.title || "Untitled",
+        videoDuration: data.lengthSeconds ? parseInt(data.lengthSeconds) : null,
+      };
     });
 
     // Step 3: Transcribe with AssemblyAI (more reliable than Whisper for various formats)
@@ -340,7 +372,6 @@ export const processVideo = inngest.createFunction(
         .join("\n");
 
       const prompt = `You are a viral content expert. Find the SINGLE BEST clip for TikTok/Reels/Shorts.
-
 TRANSCRIPT:
 ${formattedTranscript}
 
